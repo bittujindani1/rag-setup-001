@@ -8,6 +8,7 @@ API_URL="${RAG_API_URL:-http://127.0.0.1:8000}"
 SNOW_WORKSPACE="${SNOW_WORKSPACE:-snow_idx}"
 GENERATED_DIR="$ROOT_DIR/scripts/generated"
 CSV_TICKETS="$GENERATED_DIR/servicenow_tickets.csv"
+CSV_TICKETS_WIN="$(cygpath -w "$CSV_TICKETS" 2>/dev/null || echo "$CSV_TICKETS")"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "Python executable not found: $PYTHON_BIN" >&2
@@ -36,6 +37,7 @@ import requests
 api_url = r'''$API_URL'''
 index_name = r'''$SNOW_WORKSPACE'''
 ticket_path = Path(r'''$CSV_TICKETS''')
+ticket_path = Path(r'''$CSV_TICKETS_WIN''')
 
 with ticket_path.open('rb') as handle:
     response = requests.post(
