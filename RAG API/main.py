@@ -24,11 +24,14 @@ from customchain import multi_modal_rag_chain_with_history
 from customretriever import create_ensemble_retriever, create_retriever
 from document_router import build_disambiguation_payload
 from document_support import (
-    MAX_UPLOAD_BYTES,
     build_text_result,
     extract_text_chunks,
     extract_ticket_chunks,
+    get_max_upload_bytes,
+    get_pdf_page_count,
+    get_upload_policy,
     infer_category,
+    is_limit_exempt_workspace,
     normalize_extension,
     query_needs_clarification,
     validate_ticket_upload,
@@ -258,6 +261,10 @@ class FeedbackRequest(BaseModel):
     feedback: str
 
 
+def _workspace_document_count(index_name: str) -> int:
+    return len(get_document_category_store().list_documents(index_name))
+
+
 def _index_text_document(
     *,
     index_name: str,
@@ -305,6 +312,8 @@ def _index_text_document(
         "tablecount": 0,
         "category": category,
         "content_type": content_type,
+        "warnings": [],
+        "processing_mode": "text_only",
     }
 
 
@@ -334,18 +343,29 @@ def _ingest_local_file(
 
         extension = normalize_extension(file_name)
         file_size = len(file_bytes)
-        validate_upload(file_name, content_type, file_size)
+        page_count = get_pdf_page_count(local_path) if extension == ".pdf" else None
+        existing_documents_count = _workspace_document_count(index_name)
+        warnings = validate_upload(
+            file_name,
+            content_type,
+            file_size,
+            index_name=index_name,
+            existing_documents_count=existing_documents_count,
+            pdf_page_count=page_count,
+        )
 
         filenames_in_index = list_all_filenames_in_index(index_name)
         if file_name in filenames_in_index:
             delete_documents_by_filename(index_name, file_name)
             get_document_category_store().delete_document(index_name, file_name)
 
-        if extension != ".pdf":
+        force_text_only_pdf = extension == ".pdf" and not is_limit_exempt_workspace(index_name) and page_count is not None and page_count > 20
+
+        if extension != ".pdf" or force_text_only_pdf:
             text_chunks = extract_text_chunks(local_path)
             if not text_chunks:
                 raise HTTPException(status_code=400, detail="Could not extract usable text from the uploaded document.")
-            return _index_text_document(
+            response = _index_text_document(
                 index_name=index_name,
                 file_name=file_name,
                 input_file_url=input_file_url,
@@ -353,6 +373,10 @@ def _ingest_local_file(
                 file_size=file_size,
                 text_chunks=text_chunks,
             )
+            response["warnings"] = warnings
+            response["processing_mode"] = "text_only" if extension == ".pdf" else "standard"
+            response["page_count"] = page_count
+            return response
 
         LOGGER.info("Preparing ingest temp_pdf_path=%s index_name=%s", local_path, index_name)
         json_path = upload_pdf_and_download_json(local_path, 30, temp_pdf_pathbase, file_name, input_file_url)
@@ -415,6 +439,9 @@ def _ingest_local_file(
             "tablecount": tableno,
             "category": category,
             "content_type": content_type,
+            "warnings": warnings,
+            "processing_mode": "full_pdf",
+            "page_count": page_count,
         }
     finally:
         if dynamic_output_dir and os.path.exists(dynamic_output_dir):
@@ -527,23 +554,65 @@ async def list_categories(index_name: str):
     return {"categories": get_document_category_store().list_categories(_validate_index_name(index_name))}
 
 
+@app.get("/SFRAG/upload-policy/{index_name}")
+async def upload_policy(index_name: str):
+    normalized = _validate_index_name(index_name)
+    return get_upload_policy(normalized, _workspace_document_count(normalized))
+
+
+@app.delete("/SFRAG/workspaces/{workspace_id}")
+async def delete_workspace(workspace_id: str):
+    normalized_workspace = _validate_index_name(workspace_id)
+    if normalized_workspace == "demo-shared":
+        raise HTTPException(status_code=400, detail="Shared demo workspace cannot be deleted.")
+
+    threads = [
+        thread for thread in thread_store.list_threads(limit=500)
+        if _thread_workspace(thread) == normalized_workspace
+    ]
+    for thread in threads:
+        thread_id = thread.get("id")
+        if thread_id:
+            _clear_thread_history(thread_id)
+
+    for document in get_document_category_store().list_documents(normalized_workspace):
+        filename = document.get("filename")
+        if not filename:
+            continue
+        delete_documents_by_filename(normalized_workspace, filename)
+        get_document_category_store().delete_document(normalized_workspace, filename)
+
+    return {
+        "status": "deleted",
+        "workspace_id": normalized_workspace,
+        "threads_deleted": len(threads),
+    }
+
+
 @app.post("/SFRAG/uploads/presign")
 async def create_presigned_upload(request: PresignUploadRequest):
     request.index_name = _validate_index_name(request.index_name)
     try:
-        validate_upload(request.filename, request.content_type, 0)
+        validate_upload(
+            request.filename,
+            request.content_type,
+            0,
+            index_name=request.index_name,
+            existing_documents_count=_workspace_document_count(request.index_name),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     config = get_config()
     object_key = f"{request.index_name}/{uuid.uuid4().hex}-{request.filename}"
     s3_client = boto3.client("s3", region_name=config["aws_region"])
+    max_upload_bytes = get_max_upload_bytes(request.index_name)
     try:
         presigned = s3_client.generate_presigned_post(
             config["s3_bucket_documents"],
             object_key,
             Fields={"Content-Type": request.content_type},
-            Conditions=[["content-length-range", 1, MAX_UPLOAD_BYTES], {"Content-Type": request.content_type}],
+            Conditions=[["content-length-range", 1, max_upload_bytes], {"Content-Type": request.content_type}],
             ExpiresIn=3600,
         )
     except Exception as exc:

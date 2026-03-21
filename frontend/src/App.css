@@ -273,6 +273,24 @@ button {
   margin-bottom: 12px;
 }
 
+.workspace-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.workspace-history {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.workspace-thread-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
 .workspace-tab {
   border: 1px solid var(--line);
   background: var(--paper-strong);
@@ -304,11 +322,58 @@ button {
   color: var(--muted);
 }
 
+.hero-badge.exception {
+  background: rgba(180, 83, 9, 0.14);
+  color: #b45309;
+}
+
 .workspace-meta-row {
   display: flex;
   gap: 10px;
   margin-top: 12px;
   flex-wrap: wrap;
+}
+
+.policy-card {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--paper-strong);
+}
+
+.policy-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 0.92rem;
+}
+
+.policy-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  display: grid;
+  gap: 6px;
+}
+
+.policy-notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #fff9ef;
+  border: 1px solid rgba(191, 138, 0, 0.18);
+}
+
+:root[data-theme='dark'] .policy-notice {
+  background: rgba(80, 53, 8, 0.32);
+  border-color: rgba(237, 180, 77, 0.18);
+}
+
+.policy-notice p {
+  margin: 0;
+  color: var(--ink);
 }
 
 .current-thread-summary {
@@ -629,6 +694,7 @@ button {
 .accordion-chevron {
   color: var(--muted);
   transition: transform 140ms ease;
+  display: inline-block;
 }
 
 .accordion-meta {
@@ -778,6 +844,10 @@ button {
   margin-top: 18px;
 }
 
+.modal-policy-list {
+  margin-top: 14px;
+}
+
 @keyframes shimmer {
   from {
     background-position: 200% 0;
@@ -835,6 +905,11 @@ button {
   .composer {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .policy-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 
   .toast-stack {

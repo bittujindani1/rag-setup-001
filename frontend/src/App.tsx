@@ -56,12 +56,31 @@ type PresignedUploadResponse = {
 type IngestJobResponse = {
   job_id: string
   status: string
-  result?: { category?: string }
+  result?: {
+    category?: string
+    warnings?: string[]
+    processing_mode?: string
+    page_count?: number
+  }
   error?: string
 }
 
 type FeedbackResponse = {
   status: string
+}
+
+type UploadPolicy = {
+  workspace_id: string
+  is_exception_workspace: boolean
+  exception_workspace_id: string
+  supported_types: string[]
+  max_upload_mb: number
+  workspace_document_limit: number | null
+  workspace_document_count: number
+  pdf_page_warning_threshold: number | null
+  pdf_text_only_threshold: number | null
+  pdf_page_hard_limit: number | null
+  warnings: string[]
 }
 
 type Toast = {
@@ -74,6 +93,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:800
 const DEFAULT_INDEX = import.meta.env.VITE_INDEX_NAME ?? 'statefarm_rag'
 const SHARED_WORKSPACE = import.meta.env.VITE_SHARED_INDEX_NAME ?? 'demo-shared'
 const PERSONAL_WORKSPACE_KEY = 'rag-demo-personal-workspace'
+const PERSONAL_WORKSPACES_KEY = 'rag-demo-personal-workspaces'
 const ACTIVE_WORKSPACE_KEY = 'rag-demo-active-workspace'
 const FEEDBACK_USER_KEY = 'rag-demo-feedback-user'
 const THEME_KEY = 'rag-demo-theme'
@@ -144,6 +164,7 @@ function formatTimestamp(value: string): string {
 
 function App() {
   const [personalWorkspace, setPersonalWorkspace] = useState(DEFAULT_INDEX)
+  const [personalWorkspaceHistory, setPersonalWorkspaceHistory] = useState<string[]>([])
   const [workspaceDraft, setWorkspaceDraft] = useState(DEFAULT_INDEX)
   const [activeWorkspace, setActiveWorkspace] = useState<'personal' | 'shared'>('personal')
   const [threads, setThreads] = useState<Thread[]>([])
@@ -158,9 +179,13 @@ function App() {
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [feedbackUserId, setFeedbackUserId] = useState('')
   const [feedbackText, setFeedbackText] = useState('')
+  const [uploadPolicy, setUploadPolicy] = useState<UploadPolicy | null>(null)
+  const [uploadPolicyNotices, setUploadPolicyNotices] = useState<string[]>([])
   const [showUploadWarning, setShowUploadWarning] = useState(false)
   const [openMenuThreadId, setOpenMenuThreadId] = useState<string | null>(null)
   const [confirmDeleteThreadId, setConfirmDeleteThreadId] = useState<string | null>(null)
+  const [openWorkspaceMenuId, setOpenWorkspaceMenuId] = useState<string | null>(null)
+  const [confirmDeleteWorkspaceId, setConfirmDeleteWorkspaceId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loadingMessage, setLoadingMessage] = useState('Ready')
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
@@ -201,6 +226,11 @@ function App() {
     }, 3500)
   }
 
+  function storeWorkspaceHistory(next: string[]) {
+    setPersonalWorkspaceHistory(next)
+    localStorage.setItem(PERSONAL_WORKSPACES_KEY, JSON.stringify(next))
+  }
+
   async function refreshThreads(workspaceId = indexName) {
     const data = await apiFetch<{ threads: Thread[] }>(
       `/SFRAG/threads?workspace_id=${encodeURIComponent(workspaceId)}`,
@@ -218,6 +248,12 @@ function App() {
     setCategories(categoryResponse.categories)
   }
 
+  async function refreshUploadPolicy(workspaceId = indexName) {
+    const policy = await apiFetch<UploadPolicy>(`/SFRAG/upload-policy/${workspaceId}`)
+    setUploadPolicy(policy)
+    return policy
+  }
+
   function resetWorkspaceState() {
     setThreads([])
     setActiveThreadId(null)
@@ -227,8 +263,11 @@ function App() {
     setPendingQuestion(null)
     setQuestion('')
     setUploadFile(null)
+    setUploadPolicyNotices([])
     setOpenMenuThreadId(null)
     setConfirmDeleteThreadId(null)
+    setOpenWorkspaceMenuId(null)
+    setConfirmDeleteWorkspaceId(null)
   }
 
   async function ensureThread(questionSeed?: string): Promise<{ threadId: string; sessionId: string }> {
@@ -271,6 +310,23 @@ function App() {
     }
   }
 
+  function commitWorkspaceSelection(nextWorkspace: string) {
+    const normalized = normalizeWorkspace(nextWorkspace)
+    setPersonalWorkspace(normalized)
+    setWorkspaceDraft(normalized)
+    storeWorkspaceHistory([normalized, ...personalWorkspaceHistory.filter((item) => item !== normalized)].slice(0, 12))
+    setActiveWorkspace('personal')
+    pushToast(`Switched to workspace ${normalized}.`, 'success')
+  }
+
+  function createWorkspaceFromDraft() {
+    commitWorkspaceSelection(workspaceDraft)
+  }
+
+  function createFreshWorkspace() {
+    commitWorkspaceSelection(generateWorkspaceName())
+  }
+
   async function openThread(threadId: string) {
     const thread = await apiFetch<Thread>(
       `/SFRAG/threads/${threadId}?workspace_id=${encodeURIComponent(indexName)}`,
@@ -300,6 +356,31 @@ function App() {
     pushToast('Chat deleted.', 'success')
   }
 
+  async function handleDeleteWorkspace(workspaceId: string) {
+    try {
+      setBusy(true)
+      await apiFetch(`/SFRAG/workspaces/${encodeURIComponent(workspaceId)}`, { method: 'DELETE' })
+      const remaining = personalWorkspaceHistory.filter((item) => item !== workspaceId)
+      storeWorkspaceHistory(remaining)
+      setOpenWorkspaceMenuId(null)
+      setConfirmDeleteWorkspaceId(null)
+
+      if (personalWorkspace === workspaceId) {
+        const fallback = remaining[0] ?? generateWorkspaceName()
+        setPersonalWorkspace(fallback)
+        setWorkspaceDraft(fallback)
+        if (remaining.length === 0) {
+          storeWorkspaceHistory([fallback])
+        }
+      }
+      pushToast(`Workspace ${workspaceId} deleted.`, 'success')
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Workspace deletion failed.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   useEffect(() => {
     if (chatLogRef.current) {
       chatLogRef.current.scrollTo({ top: chatLogRef.current.scrollHeight, behavior: 'smooth' })
@@ -315,6 +396,7 @@ function App() {
     const onDocumentClick = (event: MouseEvent) => {
       if (!menuContainerRef.current?.contains(event.target as Node)) {
         setOpenMenuThreadId(null)
+        setOpenWorkspaceMenuId(null)
       }
     }
     document.addEventListener('mousedown', onDocumentClick)
@@ -344,13 +426,19 @@ function App() {
 
       if (payload.mode === 'clarify') {
         setPendingQuestion(finalQuestion)
-        setMessages((current) => [...current, { role: 'assistant', content: payload.response.content, timestamp: nowIso() }])
+        setMessages((current) => [
+          ...current,
+          { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
+        ])
         setCategories(payload.categories ?? categories)
         pushToast('Multiple categories found. Pick one to continue.', 'info')
       } else {
         setPendingQuestion(null)
         setSelectedCategory(payload.selected_category ?? forcedCategory ?? null)
-        setMessages((current) => [...current, { role: 'assistant', content: payload.response.content, timestamp: nowIso() }])
+        setMessages((current) => [
+          ...current,
+          { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
+        ])
         pushToast('Answer ready.', 'success')
       }
 
@@ -366,10 +454,6 @@ function App() {
 
   async function performUpload() {
     if (!uploadFile || isSharedWorkspace) return
-    if (uploadFile.size > 5 * 1024 * 1024) {
-      pushToast('Upload blocked: file is larger than 5 MB.', 'error')
-      return
-    }
     try {
       setBusy(true)
       setLoadingMessage(`Uploading ${uploadFile.name}...`)
@@ -416,10 +500,15 @@ function App() {
       }
       setUploadFile(null)
       await refreshDocuments(indexName)
+      await refreshUploadPolicy(indexName)
+      setUploadPolicyNotices(finalJob.result?.warnings ?? [])
       pushToast(
         `Indexed ${uploadFile.name} as ${finalJob.result?.category ?? 'uncategorized'}.`,
         'success',
       )
+      for (const warning of finalJob.result?.warnings ?? []) {
+        pushToast(warning, 'info')
+      }
     } catch (error) {
       try {
         const fallbackForm = new FormData()
@@ -435,7 +524,12 @@ function App() {
         }
         setUploadFile(null)
         await refreshDocuments(indexName)
+        await refreshUploadPolicy(indexName)
+        setUploadPolicyNotices(fallbackPayload.warnings ?? [])
         pushToast(`Indexed ${uploadFile.name} as ${fallbackPayload.category}.`, 'success')
+        for (const warning of fallbackPayload.warnings ?? []) {
+          pushToast(warning, 'info')
+        }
       } catch (fallbackError) {
         pushToast(fallbackError instanceof Error ? fallbackError.message : String(error), 'error')
       }
@@ -488,15 +582,20 @@ function App() {
 
   useEffect(() => {
     const storedWorkspace = localStorage.getItem(PERSONAL_WORKSPACE_KEY)
+    const storedWorkspaceHistory = localStorage.getItem(PERSONAL_WORKSPACES_KEY)
     const normalizedWorkspace = normalizeWorkspace(storedWorkspace || generateWorkspaceName())
+    const parsedHistory = storedWorkspaceHistory ? (JSON.parse(storedWorkspaceHistory) as string[]) : []
+    const nextHistory = [normalizedWorkspace, ...parsedHistory.filter((item) => item !== normalizedWorkspace)].slice(0, 12)
     const storedMode = localStorage.getItem(ACTIVE_WORKSPACE_KEY)
     const storedUserId = localStorage.getItem(FEEDBACK_USER_KEY)
     const storedTheme = localStorage.getItem(THEME_KEY)
     setPersonalWorkspace(normalizedWorkspace)
+    setPersonalWorkspaceHistory(nextHistory)
     setWorkspaceDraft(normalizedWorkspace)
     setActiveWorkspace(storedMode === 'shared' ? 'shared' : 'personal')
     setFeedbackUserId(storedUserId ?? '')
     setTheme(storedTheme === 'dark' ? 'dark' : 'light')
+    localStorage.setItem(PERSONAL_WORKSPACES_KEY, JSON.stringify(nextHistory))
   }, [])
 
   useEffect(() => {
@@ -516,6 +615,7 @@ function App() {
       }
     })
     void refreshDocuments(indexName)
+    void refreshUploadPolicy(indexName)
   }, [indexName])
 
   return (
@@ -557,16 +657,75 @@ function App() {
               value={isSharedWorkspace ? indexName : workspaceDraft}
               disabled={isSharedWorkspace}
               onChange={(event) => setWorkspaceDraft(event.target.value)}
-              onBlur={() => setPersonalWorkspace(normalizeWorkspace(workspaceDraft))}
+              onBlur={() => !isSharedWorkspace && commitWorkspaceSelection(workspaceDraft)}
             />
           </label>
+          {!isSharedWorkspace ? (
+            <div className="workspace-actions">
+              <button className="ghost-button" type="button" onClick={createWorkspaceFromDraft}>
+                Use workspace
+              </button>
+              <button className="ghost-button" type="button" onClick={createFreshWorkspace}>
+                New workspace
+              </button>
+            </div>
+          ) : null}
           <p className="helper-text">
             {isSharedWorkspace
               ? 'Read-only workspace with preloaded demo content.'
               : 'Only your uploads and queries use this workspace.'}
           </p>
+          {!isSharedWorkspace ? (
+            <div className="workspace-history" ref={menuContainerRef}>
+              <div className="panel-head tight">
+                <h2>Workspace history</h2>
+              </div>
+              <div className="thread-list workspace-thread-list">
+                {personalWorkspaceHistory.map((workspaceId) => (
+                  <div key={workspaceId} className={`thread-item ${workspaceId === personalWorkspace ? 'active' : ''}`}>
+                    <button className="thread-link" onClick={() => commitWorkspaceSelection(workspaceId)}>
+                      <strong>{workspaceId}</strong>
+                      <span>{workspaceId === 'test-big-001' ? 'Limit exception enabled' : 'Reusable personal workspace'}</span>
+                    </button>
+                    <div className="thread-actions">
+                      <button
+                        className="menu-button kebab-button"
+                        aria-label="Workspace actions"
+                        onClick={() => {
+                          setOpenWorkspaceMenuId((current) => (current === workspaceId ? null : workspaceId))
+                          setConfirmDeleteWorkspaceId(null)
+                        }}
+                      >
+                        <span />
+                        <span />
+                        <span />
+                      </button>
+                      {openWorkspaceMenuId === workspaceId ? (
+                        <div className="thread-menu">
+                          {confirmDeleteWorkspaceId === workspaceId ? (
+                            <>
+                              <p className="thread-menu-copy">Delete this workspace and its indexed data?</p>
+                              <button className="thread-menu-item delete" onClick={() => void handleDeleteWorkspace(workspaceId)}>
+                                Confirm delete
+                              </button>
+                              <button className="thread-menu-item" onClick={() => setConfirmDeleteWorkspaceId(null)}>
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button className="thread-menu-item delete" onClick={() => setConfirmDeleteWorkspaceId(workspaceId)}>
+                              Delete workspace
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
-
         <div className="panel current-thread-panel">
           <div className="panel-head tight">
             <h2>Current chat</h2>
@@ -586,7 +745,7 @@ function App() {
           <div className="panel-head">
             <h2>History</h2>
           </div>
-          <div className="thread-list" ref={menuContainerRef}>
+          <div className="thread-list">
             {historicalThreads.length === 0 ? <p className="history-empty">Past chats will appear here.</p> : null}
             {historicalThreads.map((thread) => (
               <div key={thread.id} className={`thread-item ${thread.id === activeThreadId ? 'active' : ''}`}>
@@ -659,6 +818,45 @@ function App() {
             <div className="workspace-meta-row">
               <span className="hero-badge">{isSharedWorkspace ? 'Read-only' : 'Read / Write'}</span>
               <span className="hero-badge subtle">{loadingMessage}</span>
+              {uploadPolicy?.is_exception_workspace ? <span className="hero-badge exception">Limit exception active</span> : null}
+            </div>
+            <div className="policy-card">
+              <div className="policy-row">
+                <strong>Supported:</strong>
+                <span>{uploadPolicy?.supported_types.map((item) => item.toUpperCase()).join(', ') ?? 'PDF, TXT, DOCX, XLSX'}</span>
+              </div>
+              <div className="policy-row">
+                <strong>Upload size:</strong>
+                <span>Up to {uploadPolicy?.max_upload_mb ?? 5} MB</span>
+              </div>
+              {uploadPolicy?.workspace_document_limit ? (
+                <div className="policy-row">
+                  <strong>Workspace quota:</strong>
+                  <span>
+                    {uploadPolicy.workspace_document_count} of {uploadPolicy.workspace_document_limit} documents indexed
+                  </span>
+                </div>
+              ) : null}
+              {uploadPolicy?.pdf_text_only_threshold ? (
+                <div className="policy-row">
+                  <strong>PDF guidance:</strong>
+                  <span>
+                    Over {uploadPolicy.pdf_text_only_threshold} pages uses text-only processing. Over {uploadPolicy.pdf_page_hard_limit} pages is blocked.
+                  </span>
+                </div>
+              ) : null}
+              <ul className="policy-list">
+                {(uploadPolicy?.warnings ?? []).map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+              {uploadPolicyNotices.length > 0 ? (
+                <div className="policy-notice">
+                  {uploadPolicyNotices.map((notice) => (
+                    <p key={notice}>{notice}</p>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
           <form className="upload-form" onSubmit={(event) => void handleUpload(event)}>
@@ -673,7 +871,6 @@ function App() {
             </button>
           </form>
         </section>
-
         <section className="content-grid">
           <div className="chat-card">
             <div className="chat-log" ref={chatLogRef}>
@@ -756,7 +953,7 @@ function App() {
                 <span>Indexed documents</span>
                 <div className="accordion-meta">
                   <span className="accordion-count">{documents.length}</span>
-                  <span className={`accordion-chevron ${documentsOpen ? 'open' : ''}`}>⌄</span>
+                  <span className={`accordion-chevron ${documentsOpen ? 'open' : ''}`}>^</span>
                 </div>
               </button>
               {documentsOpen ? (
@@ -780,7 +977,7 @@ function App() {
             <div className="side-card">
               <button className="accordion-toggle" onClick={() => setFeedbackOpen((current) => !current)}>
                 <span>Feedback</span>
-                <span className={`accordion-chevron ${feedbackOpen ? 'open' : ''}`}>⌄</span>
+                <span className={`accordion-chevron ${feedbackOpen ? 'open' : ''}`}>^</span>
               </button>
               {feedbackOpen ? (
                 <form className="feedback-form" onSubmit={(event) => void handleFeedbackSubmit(event)}>
@@ -806,7 +1003,6 @@ function App() {
             </div>
           </div>
         </section>
-
         <div className="toast-stack" aria-live="polite">
           {toasts.map((toast) => (
             <div key={toast.id} className={`toast ${toast.tone}`}>
@@ -825,6 +1021,16 @@ function App() {
               This demo portal is only for non-sensitive testing. Do not upload critical business data, personal data,
               customer data, health data, financial data, or any document containing PII.
             </p>
+            <ul className="policy-list modal-policy-list">
+              <li>Supported file types: {(uploadPolicy?.supported_types ?? ['pdf', 'txt', 'docx', 'xlsx']).map((item) => item.toUpperCase()).join(', ')}.</li>
+              <li>Workspace upload size limit: {uploadPolicy?.max_upload_mb ?? 5} MB.</li>
+              {uploadPolicy?.workspace_document_limit ? (
+                <li>Workspace quota: {uploadPolicy.workspace_document_count} of {uploadPolicy.workspace_document_limit} indexed documents already used.</li>
+              ) : null}
+              {uploadPolicy?.pdf_text_only_threshold ? (
+                <li>Large PDFs over {uploadPolicy.pdf_text_only_threshold} pages switch to text-only processing in standard workspaces.</li>
+              ) : null}
+            </ul>
             <div className="modal-actions">
               <button
                 className="ghost-button"

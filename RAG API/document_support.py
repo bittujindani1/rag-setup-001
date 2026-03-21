@@ -8,10 +8,17 @@ from typing import Iterable, List
 
 from docx import Document as DocxDocument
 from openpyxl import load_workbook
+from PyPDF2 import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+EXCEPTION_UPLOAD_BYTES = 25 * 1024 * 1024
+EXCEPTION_WORKSPACE = "test-big-001"
+WORKSPACE_DOCUMENT_LIMIT = 10
+PDF_PAGE_WARNING_THRESHOLD = 12
+PDF_TEXT_ONLY_THRESHOLD = 20
+PDF_PAGE_HARD_LIMIT = 35
 ALLOWED_CONTENT_TYPES = {
     ".pdf": {"application/pdf"},
     ".txt": {"text/plain"},
@@ -47,15 +54,92 @@ def normalize_extension(filename: str) -> str:
     return Path(filename or "").suffix.lower()
 
 
-def validate_upload(filename: str, content_type: str, size_bytes: int) -> None:
+def is_limit_exempt_workspace(index_name: str | None) -> bool:
+    return (index_name or "").strip().lower() == EXCEPTION_WORKSPACE
+
+
+def get_max_upload_bytes(index_name: str | None) -> int:
+    return EXCEPTION_UPLOAD_BYTES if is_limit_exempt_workspace(index_name) else MAX_UPLOAD_BYTES
+
+
+def get_upload_policy(index_name: str | None, existing_documents_count: int = 0) -> dict:
+    exempt = is_limit_exempt_workspace(index_name)
+    return {
+        "workspace_id": (index_name or "").strip().lower(),
+        "is_exception_workspace": exempt,
+        "exception_workspace_id": EXCEPTION_WORKSPACE,
+        "supported_types": ["pdf", "txt", "docx", "xlsx"],
+        "max_upload_mb": round(get_max_upload_bytes(index_name) / (1024 * 1024)),
+        "workspace_document_limit": None if exempt else WORKSPACE_DOCUMENT_LIMIT,
+        "workspace_document_count": existing_documents_count,
+        "pdf_page_warning_threshold": None if exempt else PDF_PAGE_WARNING_THRESHOLD,
+        "pdf_text_only_threshold": None if exempt else PDF_TEXT_ONLY_THRESHOLD,
+        "pdf_page_hard_limit": None if exempt else PDF_PAGE_HARD_LIMIT,
+        "warnings": [
+            "Only upload non-sensitive files. Do not upload critical, regulated, or PII data.",
+            "Supported file types: PDF, TXT, DOCX, XLSX.",
+            (
+                f"Standard workspaces allow files up to {round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB, "
+                f"up to {WORKSPACE_DOCUMENT_LIMIT} indexed documents per workspace, and PDF guidance on page count."
+                if not exempt
+                else f"{EXCEPTION_WORKSPACE} is the test exception workspace. Higher upload limits and PDF limits are bypassed there."
+            ),
+            (
+                f"PDFs over {PDF_TEXT_ONLY_THRESHOLD} pages switch to lower-cost text-only processing, and PDFs over "
+                f"{PDF_PAGE_HARD_LIMIT} pages are blocked in standard workspaces."
+                if not exempt
+                else "Large PDFs in the exception workspace still upload at your own risk and may take longer to process."
+            ),
+        ],
+    }
+
+
+def get_pdf_page_count(file_path: str) -> int:
+    reader = PdfReader(file_path)
+    return len(reader.pages)
+
+
+def validate_upload(
+    filename: str,
+    content_type: str,
+    size_bytes: int,
+    *,
+    index_name: str | None = None,
+    existing_documents_count: int | None = None,
+    pdf_page_count: int | None = None,
+) -> List[str]:
     extension = normalize_extension(filename)
     if extension not in ALLOWED_CONTENT_TYPES:
         raise ValueError(f"Unsupported file type '{extension or 'unknown'}'. Allowed: pdf, txt, docx, xlsx.")
-    if size_bytes > MAX_UPLOAD_BYTES:
-        raise ValueError("File exceeds 5 MB limit.")
+    max_upload_bytes = get_max_upload_bytes(index_name)
+    if size_bytes > max_upload_bytes:
+        raise ValueError(f"File exceeds {round(max_upload_bytes / (1024 * 1024))} MB limit for this workspace.")
     allowed_content_types = ALLOWED_CONTENT_TYPES[extension]
     if content_type and content_type not in allowed_content_types:
         raise ValueError(f"Unexpected content type '{content_type}' for '{extension}'.")
+    if is_limit_exempt_workspace(index_name):
+        return []
+
+    warnings: List[str] = []
+    if existing_documents_count is not None and existing_documents_count >= WORKSPACE_DOCUMENT_LIMIT:
+        raise ValueError(
+            f"Workspace document limit reached. Standard workspaces allow up to {WORKSPACE_DOCUMENT_LIMIT} indexed documents."
+        )
+    if extension == ".pdf" and pdf_page_count is not None:
+        if pdf_page_count > PDF_PAGE_HARD_LIMIT:
+            raise ValueError(
+                f"PDF exceeds the standard workspace page limit of {PDF_PAGE_HARD_LIMIT} pages. "
+                f"Use '{EXCEPTION_WORKSPACE}' only if you intentionally need large-file testing."
+            )
+        if pdf_page_count > PDF_TEXT_ONLY_THRESHOLD:
+            warnings.append(
+                "Large PDF detected. To reduce demo cost, this upload will use text-only processing and skip image/table extraction."
+            )
+        elif pdf_page_count > PDF_PAGE_WARNING_THRESHOLD:
+            warnings.append(
+                "This PDF is larger than the recommended page count and may take longer to process."
+            )
+    return warnings
 
 
 def infer_category(filename: str, sample_texts: Iterable[str]) -> str:
@@ -134,6 +218,10 @@ def query_needs_clarification(query: str) -> bool:
 
 def extract_text_chunks(file_path: str) -> List[str]:
     extension = normalize_extension(file_path)
+    if extension == ".pdf":
+        reader = PdfReader(file_path)
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        return _split_text(text)
     if extension == ".txt":
         text = Path(file_path).read_text(encoding="utf-8", errors="ignore")
         return _split_text(text)
