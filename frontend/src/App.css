@@ -612,6 +612,35 @@ button {
   resize: vertical;
 }
 
+.accordion-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.accordion-chevron {
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.accordion-chevron.open {
+  transform: rotate(180deg);
+}
+
+.accordion-helper {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .document-list {
   max-height: 240px;
   overflow-y: auto;

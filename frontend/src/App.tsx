@@ -164,6 +164,7 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [loadingMessage, setLoadingMessage] = useState('Ready')
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
   const chatLogRef = useRef<HTMLDivElement | null>(null)
   const menuContainerRef = useRef<HTMLDivElement | null>(null)
@@ -775,26 +776,31 @@ function App() {
             </div>
 
             <div className="side-card">
-              <div className="panel-head">
-                <h2>Feedback</h2>
-              </div>
-              <form className="feedback-form" onSubmit={(event) => void handleFeedbackSubmit(event)}>
-                <label className="field">
-                  <span>User ID</span>
-                  <input value={feedbackUserId} onChange={(event) => setFeedbackUserId(event.target.value)} placeholder="your.id@company.com" />
-                </label>
-                <label className="field">
-                  <span>Feedback</span>
-                  <textarea
-                    value={feedbackText}
-                    onChange={(event) => setFeedbackText(event.target.value)}
-                    placeholder="What worked well, what felt confusing, and what should improve?"
-                  />
-                </label>
-                <button type="submit" disabled={busy || !feedbackUserId.trim() || !feedbackText.trim()}>
-                  Submit feedback
-                </button>
-              </form>
+              <button className="accordion-toggle" onClick={() => setFeedbackOpen((current) => !current)}>
+                <span>Feedback</span>
+                <span className={`accordion-chevron ${feedbackOpen ? 'open' : ''}`}>⌄</span>
+              </button>
+              {feedbackOpen ? (
+                <form className="feedback-form" onSubmit={(event) => void handleFeedbackSubmit(event)}>
+                  <label className="field">
+                    <span>User ID</span>
+                    <input value={feedbackUserId} onChange={(event) => setFeedbackUserId(event.target.value)} placeholder="your.id@company.com" />
+                  </label>
+                  <label className="field">
+                    <span>Feedback</span>
+                    <textarea
+                      value={feedbackText}
+                      onChange={(event) => setFeedbackText(event.target.value)}
+                      placeholder="What worked well, what felt confusing, and what should improve?"
+                    />
+                  </label>
+                  <button type="submit" disabled={busy || !feedbackUserId.trim() || !feedbackText.trim()}>
+                    Submit feedback
+                  </button>
+                </form>
+              ) : (
+                <p className="accordion-helper">Open to share quick feedback after your demo test.</p>
+              )}
             </div>
           </div>
         </section>
