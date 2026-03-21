@@ -250,3 +250,5 @@ If you do not want Docker on your local machine, use the GitHub Actions workflow
 - [README-ci.md](C:/Users/dhairya.jindani/Documents/AI-coe%20projects/Rag/.github/README-ci.md)
 
 This workflow builds the backend Lambda image in GitHub Actions and pushes it to ECR, so your laptop does not need Docker.
+
+Use a fresh `main` workflow run when you need the newest Lambda image tag.
