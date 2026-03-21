@@ -164,6 +164,7 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [loadingMessage, setLoadingMessage] = useState('Ready')
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const [documentsOpen, setDocumentsOpen] = useState(true)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
   const chatLogRef = useRef<HTMLDivElement | null>(null)
@@ -751,22 +752,29 @@ function App() {
 
           <div className="side-stack">
             <div className="side-card">
-              <div className="panel-head">
-                <h2>Indexed documents</h2>
-                <span>{documents.length}</span>
-              </div>
-              <div className="document-list">
-                {documents.map((document) => (
-                  <article key={document.filename} className="document-item">
-                    <header>
-                      <strong>{document.filename}</strong>
-                      <span className="badge">{document.category}</span>
-                    </header>
-                    <p>{document.content_type || 'unknown type'}</p>
-                    <small>{formatBytes(document.size_bytes)}</small>
-                  </article>
-                ))}
-              </div>
+              <button className="accordion-toggle" onClick={() => setDocumentsOpen((current) => !current)}>
+                <span>Indexed documents</span>
+                <div className="accordion-meta">
+                  <span className="accordion-count">{documents.length}</span>
+                  <span className={`accordion-chevron ${documentsOpen ? 'open' : ''}`}>⌄</span>
+                </div>
+              </button>
+              {documentsOpen ? (
+                <div className="document-list">
+                  {documents.map((document) => (
+                    <article key={document.filename} className="document-item">
+                      <header>
+                        <strong>{document.filename}</strong>
+                        <span className="badge">{document.category}</span>
+                      </header>
+                      <p>{document.content_type || 'unknown type'}</p>
+                      <small>{formatBytes(document.size_bytes)}</small>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="accordion-helper">Expand to inspect uploaded files and detected categories.</p>
+              )}
             </div>
 
             <div className="side-card">

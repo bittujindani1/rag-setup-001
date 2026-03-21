@@ -631,6 +631,23 @@ button {
   transition: transform 140ms ease;
 }
 
+.accordion-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.accordion-count {
+  min-width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 0.84rem;
+}
+
 .accordion-chevron.open {
   transform: rotate(180deg);
 }
