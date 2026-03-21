@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 
 type Message = {
@@ -92,6 +93,7 @@ type Toast = {
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
 const DEFAULT_INDEX = import.meta.env.VITE_INDEX_NAME ?? 'statefarm_rag'
 const SHARED_WORKSPACE = import.meta.env.VITE_SHARED_INDEX_NAME ?? 'demo-shared'
+const SNOW_WORKSPACE = import.meta.env.VITE_SNOW_INDEX_NAME ?? 'snow_idx'
 const PERSONAL_WORKSPACE_KEY = 'rag-demo-personal-workspace'
 const PERSONAL_WORKSPACES_KEY = 'rag-demo-personal-workspaces'
 const ACTIVE_WORKSPACE_KEY = 'rag-demo-active-workspace'
@@ -166,7 +168,7 @@ function App() {
   const [personalWorkspace, setPersonalWorkspace] = useState(DEFAULT_INDEX)
   const [personalWorkspaceHistory, setPersonalWorkspaceHistory] = useState<string[]>([])
   const [workspaceDraft, setWorkspaceDraft] = useState(DEFAULT_INDEX)
-  const [activeWorkspace, setActiveWorkspace] = useState<'personal' | 'shared'>('personal')
+  const [activeWorkspace, setActiveWorkspace] = useState<'personal' | 'shared' | 'snow'>('personal')
   const [threads, setThreads] = useState<Thread[]>([])
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string>('')
@@ -195,11 +197,14 @@ function App() {
   const chatLogRef = useRef<HTMLDivElement | null>(null)
   const menuContainerRef = useRef<HTMLDivElement | null>(null)
 
-  const indexName = useMemo(
-    () => (activeWorkspace === 'shared' ? SHARED_WORKSPACE : personalWorkspace),
-    [activeWorkspace, personalWorkspace],
-  )
+  const indexName = useMemo(() => {
+    if (activeWorkspace === 'shared') return SHARED_WORKSPACE
+    if (activeWorkspace === 'snow') return SNOW_WORKSPACE
+    return personalWorkspace
+  }, [activeWorkspace, personalWorkspace])
   const isSharedWorkspace = activeWorkspace === 'shared'
+  const isSnowWorkspace = activeWorkspace === 'snow'
+  const isReadOnlyWorkspace = isSharedWorkspace || isSnowWorkspace
   const sortedThreads = useMemo(
     () =>
       [...threads].sort(
@@ -449,7 +454,7 @@ function App() {
   }
 
   async function performUpload() {
-    if (!uploadFile || isSharedWorkspace) return
+    if (!uploadFile || isReadOnlyWorkspace) return
     try {
       setBusy(true)
       setLoadingMessage(`Uploading ${uploadFile.name}...`)
@@ -537,7 +542,7 @@ function App() {
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!uploadFile || isSharedWorkspace) return
+    if (!uploadFile || isReadOnlyWorkspace) return
     setShowUploadWarning(true)
   }
 
@@ -588,7 +593,7 @@ function App() {
     setPersonalWorkspace(normalizedWorkspace)
     setPersonalWorkspaceHistory(nextHistory)
     setWorkspaceDraft(normalizedWorkspace)
-    setActiveWorkspace(storedMode === 'shared' ? 'shared' : 'personal')
+    setActiveWorkspace(storedMode === 'shared' ? 'shared' : storedMode === 'snow' ? 'snow' : 'personal')
     setFeedbackUserId(storedUserId ?? '')
     setTheme(storedTheme === 'dark' ? 'dark' : 'light')
     localStorage.setItem(PERSONAL_WORKSPACES_KEY, JSON.stringify(nextHistory))
@@ -635,7 +640,7 @@ function App() {
           </div>
           <div className="workspace-switcher">
             <button
-              className={`workspace-tab ${!isSharedWorkspace ? 'active' : ''}`}
+              className={`workspace-tab ${activeWorkspace === 'personal' ? 'active' : ''}`}
               onClick={() => setActiveWorkspace('personal')}
             >
               My workspace
@@ -646,17 +651,23 @@ function App() {
             >
               Shared demo
             </button>
+            <button
+              className={`workspace-tab ${isSnowWorkspace ? 'active' : ''}`}
+              onClick={() => setActiveWorkspace('snow')}
+            >
+              ServiceNow
+            </button>
           </div>
           <label className="field">
-            <span>{isSharedWorkspace ? 'Shared workspace' : 'Personal workspace'}</span>
+            <span>{isSharedWorkspace ? 'Shared workspace' : isSnowWorkspace ? 'ServiceNow index' : 'Personal workspace'}</span>
             <input
-              value={isSharedWorkspace ? indexName : workspaceDraft}
-              disabled={isSharedWorkspace}
+              value={isReadOnlyWorkspace ? indexName : workspaceDraft}
+              disabled={isReadOnlyWorkspace}
               onChange={(event) => setWorkspaceDraft(event.target.value)}
-              onBlur={() => !isSharedWorkspace && commitWorkspaceSelection(workspaceDraft)}
+              onBlur={() => !isReadOnlyWorkspace && commitWorkspaceSelection(workspaceDraft)}
             />
           </label>
-          {!isSharedWorkspace ? (
+          {!isReadOnlyWorkspace ? (
             <div className="workspace-actions">
               <button className="ghost-button" type="button" onClick={createWorkspaceFromDraft}>
                 Use workspace
@@ -669,9 +680,11 @@ function App() {
           <p className="helper-text">
             {isSharedWorkspace
               ? 'Read-only workspace with preloaded demo content.'
-              : 'Only your uploads and queries use this workspace.'}
+              : isSnowWorkspace
+                ? 'Read-only ServiceNow ticket analysis index.'
+                : 'Only your uploads and queries use this workspace.'}
           </p>
-          {!isSharedWorkspace ? (
+          {!isReadOnlyWorkspace ? (
             <div className="workspace-history" ref={menuContainerRef}>
               <div className="panel-head tight">
                 <h2>Workspace history</h2>
@@ -794,10 +807,16 @@ function App() {
         <section className="hero-card">
           <div>
             <p className="eyebrow">Cost-lean local implementation</p>
-            <h2>{isSharedWorkspace ? 'Explore shared demo documents safely' : 'Upload docs and test your own isolated workspace'}</h2>
+            <h2>
+              {isSharedWorkspace
+                ? 'Explore shared demo documents safely'
+                : isSnowWorkspace
+                  ? 'Analyze ServiceNow ticket history from the dedicated snow_idx index'
+                  : 'Upload docs and test your own isolated workspace'}
+            </h2>
             <p className="helper-text strong">Active workspace: {indexName}</p>
             <div className="workspace-meta-row">
-              <span className="hero-badge">{isSharedWorkspace ? 'Read-only' : 'Read / Write'}</span>
+              <span className="hero-badge">{isReadOnlyWorkspace ? 'Read-only' : 'Read / Write'}</span>
               <span className="hero-badge subtle">{loadingMessage}</span>
               {uploadPolicy?.is_exception_workspace ? <span className="hero-badge exception">Limit exception active</span> : null}
             </div>
@@ -805,7 +824,9 @@ function App() {
               <span className="hero-badge subtle">
                 {(uploadPolicy?.supported_types ?? ['pdf', 'txt', 'docx', 'xlsx']).map((item) => item.toUpperCase()).join(', ')}
               </span>
-              <span className="hero-badge subtle">Up to {uploadPolicy?.max_upload_mb ?? 5} MB</span>
+              <span className="hero-badge subtle">
+                {isSnowWorkspace ? 'Preloaded tickets' : `Up to ${uploadPolicy?.max_upload_mb ?? 5} MB`}
+              </span>
               {uploadPolicy?.workspace_document_limit ? (
                 <span className="hero-badge subtle">
                   {uploadPolicy.workspace_document_count} / {uploadPolicy.workspace_document_limit} docs
@@ -824,11 +845,11 @@ function App() {
             <input
               type="file"
               accept=".pdf,.txt,.docx,.xlsx"
-              disabled={isSharedWorkspace}
+              disabled={isReadOnlyWorkspace}
               onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
             />
-            <button type="submit" disabled={busy || !uploadFile || isSharedWorkspace}>
-              {busy ? 'Working...' : isSharedWorkspace ? 'Read-only' : 'Upload'}
+            <button type="submit" disabled={busy || !uploadFile || isReadOnlyWorkspace}>
+              {busy ? 'Working...' : isReadOnlyWorkspace ? 'Read-only' : 'Upload'}
             </button>
           </form>
         </section>
@@ -846,7 +867,9 @@ function App() {
                 <div className="empty-state">
                   {isSharedWorkspace
                     ? 'Ask questions against the shared demo workspace.'
-                    : 'Start a thread or upload a document to begin.'}
+                    : isSnowWorkspace
+                      ? 'Ask about recurring incidents, root causes, assignment groups, or ask for ticket summaries in table format.'
+                      : 'Start a thread or upload a document to begin.'}
                 </div>
               ) : (
                 orderedMessages.map((message, index) => (
@@ -867,7 +890,7 @@ function App() {
                     </div>
                     <div className="bubble-body">
                       {message.role === 'assistant' ? (
-                        <ReactMarkdown>{message.content}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                       ) : (
                         <p>{message.content}</p>
                       )}
@@ -900,7 +923,11 @@ function App() {
               <textarea
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
-                placeholder="Ask about coverage, claims, policy details, or similar support tickets..."
+                placeholder={
+                  isSnowWorkspace
+                    ? 'Ask about repeat incidents, priorities, root causes, or ask to show ServiceNow tickets in table format...'
+                    : 'Ask about coverage, claims, policy details, or similar support tickets...'
+                }
               />
               <button type="submit" disabled={busy || !question.trim()}>
                 {busy ? 'Thinking...' : 'Send'}
