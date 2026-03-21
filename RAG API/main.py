@@ -13,7 +13,6 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from metadata import create_image_metadata, create_table_metadata, create_text_metadata, preprocess_metadata
 from pydantic import BaseModel
@@ -85,13 +84,6 @@ app = FastAPI(
     openapi_url=f"/{prefix1}/docs/openapi.json",
     docs_url=f"/{prefix1}/docs/",
     redoc_url=f"/{prefix1}/docs/redoc",
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 
