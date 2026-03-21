@@ -189,7 +189,7 @@ function App() {
     () => sortedThreads.filter((thread) => thread.id !== activeThreadId),
     [activeThreadId, sortedThreads],
   )
-  const orderedMessages = useMemo(() => [...messages].reverse(), [messages])
+  const orderedMessages = useMemo(() => [...messages], [messages])
   const logoSrc = theme === 'dark' ? '/logo_dark.PNG' : '/logo_light.PNG'
 
   function pushToast(message: string, tone: Toast['tone']) {
@@ -301,7 +301,7 @@ function App() {
 
   useEffect(() => {
     if (chatLogRef.current) {
-      chatLogRef.current.scrollTo({ top: 0, behavior: 'smooth' })
+      chatLogRef.current.scrollTo({ top: chatLogRef.current.scrollHeight, behavior: 'smooth' })
     }
   }, [orderedMessages])
 
@@ -328,7 +328,7 @@ function App() {
       setLoadingMessage(`Searching ${indexName}...`)
       const { threadId, sessionId: currentSessionId } = await ensureThread(finalQuestion)
 
-      setMessages((current) => [{ role: 'user', content: finalQuestion, timestamp: nowIso() }, ...current])
+      setMessages((current) => [...current, { role: 'user', content: finalQuestion, timestamp: nowIso() }])
       setQuestion('')
       const payload = await apiFetch<RetrievalResponse>('/SFRAG/retrieval', {
         method: 'POST',
@@ -343,19 +343,13 @@ function App() {
 
       if (payload.mode === 'clarify') {
         setPendingQuestion(finalQuestion)
-        setMessages((current) => [
-          { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
-          ...current,
-        ])
+        setMessages((current) => [...current, { role: 'assistant', content: payload.response.content, timestamp: nowIso() }])
         setCategories(payload.categories ?? categories)
         pushToast('Multiple categories found. Pick one to continue.', 'info')
       } else {
         setPendingQuestion(null)
         setSelectedCategory(payload.selected_category ?? forcedCategory ?? null)
-        setMessages((current) => [
-          { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
-          ...current,
-        ])
+        setMessages((current) => [...current, { role: 'assistant', content: payload.response.content, timestamp: nowIso() }])
         pushToast('Answer ready.', 'success')
       }
 
