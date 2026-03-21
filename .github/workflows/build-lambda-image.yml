@@ -10,6 +10,7 @@ on:
       - 'aws/**'
       - 'config/**'
       - 'config_loader.py'
+      - 'docker/**'
       - 'env_bootstrap.py'
       - 'provider_factory.py'
       - 'terraform/variables.tf'
@@ -69,7 +70,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./RAG API/Dockerfile.lambda
+          file: ./docker/Dockerfile.lambda
           push: true
           tags: |
             ${{ steps.image-meta.outputs.image_uri_sha }}

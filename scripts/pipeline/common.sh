@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TERRAFORM_DIR="$ROOT_DIR/terraform"
 FRONTEND_DIR="$ROOT_DIR/frontend"
-BACKEND_DOCKERFILE="$ROOT_DIR/RAG API/Dockerfile.lambda"
+BACKEND_DOCKERFILE="$ROOT_DIR/docker/Dockerfile.lambda"
 LOCAL_PYTHON_DEFAULT="$ROOT_DIR/.venv_local/Scripts/python.exe"
 CALL_ANALYZER_AWSCLI_PYTHON_DEFAULT="/c/Users/dhairya.jindani/Documents/AI-coe projects/Call Analyzer/.venv/Scripts/python.exe"
 NODE_DIR_DEFAULT="/c/Users/dhairya.jindani/Downloads/npm code/node-v22.14.0-win-x64"
