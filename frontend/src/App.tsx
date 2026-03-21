@@ -207,10 +207,6 @@ function App() {
       ),
     [threads],
   )
-  const activeThread = useMemo(
-    () => sortedThreads.find((thread) => thread.id === activeThreadId) ?? null,
-    [activeThreadId, sortedThreads],
-  )
   const historicalThreads = useMemo(
     () => sortedThreads.filter((thread) => thread.id !== activeThreadId),
     [activeThreadId, sortedThreads],
