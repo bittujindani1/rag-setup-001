@@ -13,6 +13,10 @@ if [[ ! -f "$BACKEND_DOCKERFILE" ]]; then
   fail "Lambda Dockerfile not found: $BACKEND_DOCKERFILE"
 fi
 
+log "Preparing Lambda build context"
+rm -rf "$ROOT_DIR/docker/rag_api_build"
+cp -R "$ROOT_DIR/RAG API" "$ROOT_DIR/docker/rag_api_build"
+
 log "Ensuring ECR repository exists via targeted Terraform apply"
 terraform_cmd -chdir="$TERRAFORM_DIR" init
 terraform_cmd -chdir="$TERRAFORM_DIR" apply -target=aws_ecr_repository.rag_api -auto-approve

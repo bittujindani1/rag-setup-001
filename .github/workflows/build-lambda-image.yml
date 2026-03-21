@@ -66,6 +66,11 @@ jobs:
       - name: Set Up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Prepare Lambda Build Context
+        run: |
+          rm -rf docker/rag_api_build
+          cp -R "RAG API" docker/rag_api_build
+
       - name: Build And Push Lambda Image
         uses: docker/build-push-action@v6
         with:
