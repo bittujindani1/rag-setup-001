@@ -1,14 +1,16 @@
+FROM public.ecr.aws/sam/build-python3.11 AS builder
+
+WORKDIR /build
+
+COPY ["docker/rag_api_build/requirements.txt", "./"]
+RUN python -m pip install --upgrade pip \
+    && python -m pip install --no-cache-dir -r requirements.txt -t /build/python
+
 FROM public.ecr.aws/lambda/python:3.11
 
 WORKDIR ${LAMBDA_TASK_ROOT}
 
-RUN microdnf install -y gcc gcc-c++ make tar gzip \
-    && microdnf clean all
-
-COPY ["docker/rag_api_build/requirements.txt", "./"]
-RUN python -m pip install --upgrade pip \
-    && python -m pip install -r requirements.txt
-
+COPY --from=builder /build/python/ ./
 COPY aws ./aws
 COPY config ./config
 COPY config_loader.py ./config_loader.py
