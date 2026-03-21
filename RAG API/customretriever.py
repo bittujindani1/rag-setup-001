@@ -8,7 +8,7 @@ from pathlib import Path
 from langchain_core.retrievers import BaseRetriever
 from requests_aws4auth import AWS4Auth
 from opensearchpy import RequestsHttpConnection
-from langchain.vectorstores import OpenSearchVectorSearch
+from langchain_community.vectorstores import OpenSearchVectorSearch
 from langchain_core.documents import Document
 from langchain_community.retrievers import BM25Retriever
 from langchain_openai import AzureOpenAIEmbeddings

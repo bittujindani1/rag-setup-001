@@ -3,7 +3,7 @@ import sys
 import urllib
 from pathlib import Path
 from requests_aws4auth import AWS4Auth
-from langchain.vectorstores import OpenSearchVectorSearch
+from langchain_community.vectorstores import OpenSearchVectorSearch
 from opensearchpy import OpenSearch, RequestsHttpConnection
 from langchain_community.utilities.redis import get_client
 from opensearchpy import OpenSearch, RequestsHttpConnection, helpers
