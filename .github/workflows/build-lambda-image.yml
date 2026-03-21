@@ -1,4 +1,4 @@
-name: Build Lambda Image
+name: Build Lambda Image V2
 
 on:
   workflow_dispatch:
@@ -70,6 +70,12 @@ jobs:
         run: |
           rm -rf docker/rag_api_build
           cp -R "RAG API" docker/rag_api_build
+
+      - name: Print Docker Build Inputs
+        run: |
+          echo "Using Dockerfile: ./docker/Dockerfile.lambda"
+          test -f ./docker/Dockerfile.lambda
+          test -f ./docker/rag_api_build/requirements.txt
 
       - name: Build And Push Lambda Image
         uses: docker/build-push-action@v6
