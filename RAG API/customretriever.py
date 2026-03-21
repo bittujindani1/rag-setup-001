@@ -66,6 +66,12 @@ if api_key and azure_endpoint and api_version:
     )
 
 
+def _retrieve_documents(retriever, query: str):
+    if hasattr(retriever, "invoke"):
+        return retriever.invoke(query)
+    return retriever.get_relevant_documents(query)
+
+
 
 def create_retriever(index_name: str):
     config = get_config()
@@ -108,7 +114,7 @@ def create_retriever(index_name: str):
 #Define Ensemble Retriever logic
 def create_ensemble_retriever(vectorstore_retriever, query):
     # Step 1: Retrieve documents from vectorstore retriever
-    vector_docs = vectorstore_retriever.get_relevant_documents(query)
+    vector_docs = _retrieve_documents(vectorstore_retriever, query)
     LOGGER.info("Vector docs retrieved count=%s", len(vector_docs))
     if not vector_docs:
         LOGGER.warning("No documents retrieved for query=%s. Using dummy document.", query)
@@ -162,8 +168,8 @@ def create_ensemble_retriever(vectorstore_retriever, query):
             return merged
 
         def _get_relevant_documents(self, query: str, *, run_manager=None):
-            primary_docs = self.primary.get_relevant_documents(query)
-            secondary_docs = self.secondary.get_relevant_documents(query)
+            primary_docs = _retrieve_documents(self.primary, query)
+            secondary_docs = _retrieve_documents(self.secondary, query)
             return self._merge(primary_docs, secondary_docs)
 
         async def _aget_relevant_documents(self, query: str, *, run_manager=None):

@@ -32,6 +32,12 @@ latest question depends on earlier context. If it is already standalone, return 
 """
 
 
+def _retrieve_documents(retriever, query: str):
+    if hasattr(retriever, "invoke"):
+        return retriever.invoke(query)
+    return retriever.get_relevant_documents(query)
+
+
 class MultiModalRAGChainWithHistory:
     def __init__(self, retriever) -> None:
         self.retriever = retriever
@@ -89,7 +95,7 @@ class MultiModalRAGChainWithHistory:
         history = build_chat_history(session_id)
         history_messages = history.messages
         standalone_question = await asyncio.to_thread(self._rewrite_question, user_input, history_messages)
-        docs = await asyncio.to_thread(self.retriever.get_relevant_documents, standalone_question)
+        docs = await asyncio.to_thread(_retrieve_documents, self.retriever, standalone_question)
         return {
             "history": history,
             "history_messages": history_messages,
