@@ -726,24 +726,9 @@ function App() {
             </div>
           ) : null}
         </div>
-        <div className="panel current-thread-panel">
-          <div className="panel-head tight">
-            <h2>Current chat</h2>
-            <span className="current-thread-badge">{activeThread ? 'Active' : 'Idle'}</span>
-          </div>
-          {activeThread ? (
-            <div className="current-thread-summary">
-              <strong>{summarizeThread(activeThread)}</strong>
-              <span>{new Date(activeThread.createdAt).toLocaleString()}</span>
-            </div>
-          ) : (
-            <p className="history-empty">Start a new chat to create the active thread.</p>
-          )}
-        </div>
-
         <div className="panel grow">
           <div className="panel-head">
-            <h2>History</h2>
+            <h2>Chat History</h2>
           </div>
           <div className="thread-list">
             {historicalThreads.length === 0 ? <p className="history-empty">Past chats will appear here.</p> : null}
