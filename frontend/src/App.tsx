@@ -243,6 +243,32 @@ function App() {
     return { threadId: created.thread_id, sessionId: created.session_id }
   }
 
+  async function createNewThread() {
+    try {
+      setBusy(true)
+      setLoadingMessage('Starting a new chat...')
+      setActiveThreadId(null)
+      setSessionId('')
+      setMessages([])
+      setPendingQuestion(null)
+      setQuestion('')
+      setSelectedCategory(null)
+      const created = await apiFetch<{ thread_id: string; session_id: string; name: string }>('/SFRAG/threads', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'New chat', workspace_id: indexName }),
+      })
+      setActiveThreadId(created.thread_id)
+      setSessionId(created.session_id)
+      await refreshThreads(indexName)
+      pushToast('New chat started.', 'success')
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Could not start a new chat.', 'error')
+    } finally {
+      setBusy(false)
+      setLoadingMessage('Ready')
+    }
+  }
+
   async function openThread(threadId: string) {
     const thread = await apiFetch<Thread>(
       `/SFRAG/threads/${threadId}?workspace_id=${encodeURIComponent(indexName)}`,
@@ -511,7 +537,7 @@ function App() {
               <p className="eyebrow">MVP Console</p>
               <h1>RAG Demo</h1>
             </div>
-            <button className="ghost-button" onClick={() => void ensureThread()}>
+            <button className="ghost-button" onClick={() => void createNewThread()}>
               New
             </button>
           </div>
