@@ -2,6 +2,7 @@
 .env.local
 .venv/
 .venv_local/
+.tmp_lambda_build_venv/
 __pycache__/
 *.pyc
 *.pyo
