@@ -801,44 +801,24 @@ function App() {
               <span className="hero-badge subtle">{loadingMessage}</span>
               {uploadPolicy?.is_exception_workspace ? <span className="hero-badge exception">Limit exception active</span> : null}
             </div>
-            <div className="policy-card">
-              <div className="policy-row">
-                <strong>Supported:</strong>
-                <span>{uploadPolicy?.supported_types.map((item) => item.toUpperCase()).join(', ') ?? 'PDF, TXT, DOCX, XLSX'}</span>
-              </div>
-              <div className="policy-row">
-                <strong>Upload size:</strong>
-                <span>Up to {uploadPolicy?.max_upload_mb ?? 5} MB</span>
-              </div>
+            <div className="policy-summary-row">
+              <span className="hero-badge subtle">
+                {(uploadPolicy?.supported_types ?? ['pdf', 'txt', 'docx', 'xlsx']).map((item) => item.toUpperCase()).join(', ')}
+              </span>
+              <span className="hero-badge subtle">Up to {uploadPolicy?.max_upload_mb ?? 5} MB</span>
               {uploadPolicy?.workspace_document_limit ? (
-                <div className="policy-row">
-                  <strong>Workspace quota:</strong>
-                  <span>
-                    {uploadPolicy.workspace_document_count} of {uploadPolicy.workspace_document_limit} documents indexed
-                  </span>
-                </div>
-              ) : null}
-              {uploadPolicy?.pdf_text_only_threshold ? (
-                <div className="policy-row">
-                  <strong>PDF guidance:</strong>
-                  <span>
-                    Over {uploadPolicy.pdf_text_only_threshold} pages uses text-only processing. Over {uploadPolicy.pdf_page_hard_limit} pages is blocked.
-                  </span>
-                </div>
-              ) : null}
-              <ul className="policy-list">
-                {(uploadPolicy?.warnings ?? []).map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-              {uploadPolicyNotices.length > 0 ? (
-                <div className="policy-notice">
-                  {uploadPolicyNotices.map((notice) => (
-                    <p key={notice}>{notice}</p>
-                  ))}
-                </div>
+                <span className="hero-badge subtle">
+                  {uploadPolicy.workspace_document_count} / {uploadPolicy.workspace_document_limit} docs
+                </span>
               ) : null}
             </div>
+            {uploadPolicyNotices.length > 0 ? (
+              <div className="policy-notice compact">
+                {uploadPolicyNotices.map((notice) => (
+                  <p key={notice}>{notice}</p>
+                ))}
+              </div>
+            ) : null}
           </div>
           <form className="upload-form" onSubmit={(event) => void handleUpload(event)}>
             <input
@@ -1011,6 +991,12 @@ function App() {
               {uploadPolicy?.pdf_text_only_threshold ? (
                 <li>Large PDFs over {uploadPolicy.pdf_text_only_threshold} pages switch to text-only processing in standard workspaces.</li>
               ) : null}
+              {uploadPolicy?.pdf_page_hard_limit ? (
+                <li>PDFs over {uploadPolicy.pdf_page_hard_limit} pages are blocked in standard workspaces.</li>
+              ) : null}
+              {(uploadPolicy?.warnings ?? []).map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
             </ul>
             <div className="modal-actions">
               <button
