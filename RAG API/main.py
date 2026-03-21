@@ -265,6 +265,37 @@ def _workspace_document_count(index_name: str) -> int:
     return len(get_document_category_store().list_documents(index_name))
 
 
+def _normalize_model_category(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9_ -]+", "", (value or "").strip().lower())
+    normalized = normalized.replace("-", "_").replace(" ", "_")
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if not normalized:
+        return "general_document"
+    return normalized[:48]
+
+
+def _smart_infer_category(file_name: str, text_samples: list[str]) -> str:
+    heuristic = infer_category(file_name, text_samples[:3])
+    if heuristic != "uncategorized":
+        return heuristic
+
+    excerpt = "\n\n".join((sample or "").strip()[:1200] for sample in text_samples[:3] if sample).strip()
+    if not excerpt:
+        return "general_document"
+
+    prompt = (
+        "You are classifying an uploaded business document for a demo RAG portal.\n"
+        "Return only one short snake_case category label.\n"
+        "Make it specific but stable, like cloud_costing, contract, invoice, architecture, legal, finance, hr, insurance, support_tickets, operations, roadmap, procurement.\n"
+        "Do not return explanations.\n\n"
+        f"Filename: {file_name}\n\n"
+        f"Excerpt:\n{excerpt}\n"
+    )
+    model_output = get_bedrock_client().generate_text(prompt=prompt, max_tokens=20, temperature=0.0)
+    category = _normalize_model_category(model_output.splitlines()[0] if model_output else "")
+    return category or "general_document"
+
+
 def _index_text_document(
     *,
     index_name: str,
@@ -294,7 +325,7 @@ def _index_text_document(
         file_name,
         index_name,
     )
-    category = infer_category(file_name, texts_list[:3])
+    category = _smart_infer_category(file_name, texts_list[:3])
     get_document_category_store().upsert_document(
         index_name=index_name,
         filename=file_name,
@@ -422,7 +453,7 @@ def _ingest_local_file(
             index_name,
         )
         get_metrics_collector().increment_documents_indexed(indexed_chunks)
-        category = infer_category(file_name, texts_list[:3])
+        category = _smart_infer_category(file_name, texts_list[:3])
         get_document_category_store().upsert_document(
             index_name=index_name,
             filename=file_name,
