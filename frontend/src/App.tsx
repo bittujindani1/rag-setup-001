@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import ReactMarkdown from 'react-markdown'
 import './App.css'
 
 type Message = {
   role: 'user' | 'assistant'
   content: string
+  timestamp: string
 }
 
 type Thread = {
@@ -19,6 +21,7 @@ type Thread = {
     type: string
     output?: string
     input?: string
+    createdAt?: string
   }>
 }
 
@@ -61,12 +64,19 @@ type FeedbackResponse = {
   status: string
 }
 
+type Toast = {
+  id: string
+  tone: 'info' | 'success' | 'error'
+  message: string
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
 const DEFAULT_INDEX = import.meta.env.VITE_INDEX_NAME ?? 'statefarm_rag'
 const SHARED_WORKSPACE = import.meta.env.VITE_SHARED_INDEX_NAME ?? 'demo-shared'
 const PERSONAL_WORKSPACE_KEY = 'rag-demo-personal-workspace'
 const ACTIVE_WORKSPACE_KEY = 'rag-demo-active-workspace'
 const FEEDBACK_USER_KEY = 'rag-demo-feedback-user'
+const THEME_KEY = 'rag-demo-theme'
 
 function normalizeWorkspace(value: string): string {
   const normalized = value
@@ -82,6 +92,16 @@ function normalizeWorkspace(value: string): string {
 function generateWorkspaceName(): string {
   const suffix = Math.random().toString(36).slice(2, 8)
   return normalizeWorkspace(`demo-${suffix}`)
+}
+
+function summarizeThread(thread: Thread): string {
+  const firstUserStep = thread.steps?.find((step) => step.type === 'user_message')
+  const rawText = (firstUserStep?.output ?? firstUserStep?.input ?? thread.name ?? 'New chat').trim()
+  return rawText.length > 42 ? `${rawText.slice(0, 42)}...` : rawText
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -103,9 +123,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 function mapStepsToMessages(thread?: Thread): Message[] {
   return (
-    thread?.steps?.map((step) => ({
+    thread?.steps?.map((step, index) => ({
       role: step.type === 'user_message' ? 'user' : 'assistant',
       content: (step.output ?? step.input ?? '').trim(),
+      timestamp: step.createdAt ?? new Date(Date.now() - index * 1000).toISOString(),
     })) ?? []
   )
 }
@@ -115,6 +136,10 @@ function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatTimestamp(value: string): string {
+  return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
 function App() {
@@ -135,9 +160,13 @@ function App() {
   const [feedbackText, setFeedbackText] = useState('')
   const [showUploadWarning, setShowUploadWarning] = useState(false)
   const [openMenuThreadId, setOpenMenuThreadId] = useState<string | null>(null)
-  const [status, setStatus] = useState('Ready')
+  const [confirmDeleteThreadId, setConfirmDeleteThreadId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [loadingMessage, setLoadingMessage] = useState('Ready')
+  const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const [toasts, setToasts] = useState<Toast[]>([])
   const chatLogRef = useRef<HTMLDivElement | null>(null)
+  const menuContainerRef = useRef<HTMLDivElement | null>(null)
 
   const indexName = useMemo(
     () => (activeWorkspace === 'shared' ? SHARED_WORKSPACE : personalWorkspace),
@@ -151,11 +180,24 @@ function App() {
       ),
     [threads],
   )
+  const activeThread = useMemo(
+    () => sortedThreads.find((thread) => thread.id === activeThreadId) ?? null,
+    [activeThreadId, sortedThreads],
+  )
   const historicalThreads = useMemo(
     () => sortedThreads.filter((thread) => thread.id !== activeThreadId),
     [activeThreadId, sortedThreads],
   )
   const orderedMessages = useMemo(() => [...messages].reverse(), [messages])
+  const logoSrc = theme === 'dark' ? '/logo_dark.PNG' : '/logo_light.PNG'
+
+  function pushToast(message: string, tone: Toast['tone']) {
+    const id = crypto.randomUUID()
+    setToasts((current) => [...current, { id, tone, message }])
+    window.setTimeout(() => {
+      setToasts((current) => current.filter((toast) => toast.id !== id))
+    }, 3500)
+  }
 
   async function refreshThreads(workspaceId = indexName) {
     const data = await apiFetch<{ threads: Thread[] }>(
@@ -183,15 +225,17 @@ function App() {
     setPendingQuestion(null)
     setQuestion('')
     setUploadFile(null)
+    setOpenMenuThreadId(null)
+    setConfirmDeleteThreadId(null)
   }
 
-  async function ensureThread(): Promise<{ threadId: string; sessionId: string }> {
+  async function ensureThread(questionSeed?: string): Promise<{ threadId: string; sessionId: string }> {
     if (activeThreadId && sessionId) {
       return { threadId: activeThreadId, sessionId }
     }
     const created = await apiFetch<{ thread_id: string; session_id: string; name: string }>('/SFRAG/threads', {
       method: 'POST',
-      body: JSON.stringify({ name: 'New chat', workspace_id: indexName }),
+      body: JSON.stringify({ name: questionSeed?.slice(0, 80) || 'New chat', workspace_id: indexName }),
     })
     setActiveThreadId(created.thread_id)
     setSessionId(created.session_id)
@@ -206,12 +250,15 @@ function App() {
     setActiveThreadId(threadId)
     setSessionId(thread.metadata?.session_id ?? '')
     setMessages(mapStepsToMessages(thread))
+    setPendingQuestion(null)
     setOpenMenuThreadId(null)
+    setConfirmDeleteThreadId(null)
   }
 
   async function handleDeleteThread(threadId: string) {
     await apiFetch(`/SFRAG/threads/${threadId}?workspace_id=${encodeURIComponent(indexName)}`, { method: 'DELETE' })
     setOpenMenuThreadId(null)
+    setConfirmDeleteThreadId(null)
     const updated = await refreshThreads(indexName)
     if (activeThreadId === threadId) {
       setActiveThreadId(updated[0]?.id ?? null)
@@ -222,23 +269,39 @@ function App() {
         setSessionId('')
       }
     }
+    pushToast('Chat deleted.', 'success')
   }
 
   useEffect(() => {
     if (chatLogRef.current) {
-      chatLogRef.current.scrollTop = 0
+      chatLogRef.current.scrollTo({ top: 0, behavior: 'smooth' })
     }
   }, [orderedMessages])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem(THEME_KEY, theme)
+  }, [theme])
+
+  useEffect(() => {
+    const onDocumentClick = (event: MouseEvent) => {
+      if (!menuContainerRef.current?.contains(event.target as Node)) {
+        setOpenMenuThreadId(null)
+      }
+    }
+    document.addEventListener('mousedown', onDocumentClick)
+    return () => document.removeEventListener('mousedown', onDocumentClick)
+  }, [])
 
   async function handleSend(rawQuestion?: string, forcedCategory?: string | null) {
     const finalQuestion = (rawQuestion ?? question).trim()
     if (!finalQuestion) return
     try {
       setBusy(true)
-      setStatus(`Searching ${indexName}...`)
-      const { threadId, sessionId: currentSessionId } = await ensureThread()
+      setLoadingMessage(`Searching ${indexName}...`)
+      const { threadId, sessionId: currentSessionId } = await ensureThread(finalQuestion)
 
-      setMessages((current) => [...current, { role: 'user', content: finalQuestion }])
+      setMessages((current) => [{ role: 'user', content: finalQuestion, timestamp: nowIso() }, ...current])
       setQuestion('')
       const payload = await apiFetch<RetrievalResponse>('/SFRAG/retrieval', {
         method: 'POST',
@@ -253,33 +316,41 @@ function App() {
 
       if (payload.mode === 'clarify') {
         setPendingQuestion(finalQuestion)
-        setMessages((current) => [...current, { role: 'assistant', content: payload.response.content }])
+        setMessages((current) => [
+          { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
+          ...current,
+        ])
         setCategories(payload.categories ?? categories)
-        setStatus('Select a category to continue.')
+        pushToast('Multiple categories found. Pick one to continue.', 'info')
       } else {
         setPendingQuestion(null)
         setSelectedCategory(payload.selected_category ?? forcedCategory ?? null)
-        setMessages((current) => [...current, { role: 'assistant', content: payload.response.content }])
-        setStatus('Answer ready.')
+        setMessages((current) => [
+          { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
+          ...current,
+        ])
+        pushToast('Answer ready.', 'success')
       }
 
       await refreshThreads(indexName)
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Request failed.')
+      const message = error instanceof Error ? error.message : 'Request failed.'
+      pushToast(message, 'error')
     } finally {
       setBusy(false)
+      setLoadingMessage('Ready')
     }
   }
 
   async function performUpload() {
     if (!uploadFile || isSharedWorkspace) return
     if (uploadFile.size > 5 * 1024 * 1024) {
-      setStatus('Upload blocked: file is larger than 5 MB.')
+      pushToast('Upload blocked: file is larger than 5 MB.', 'error')
       return
     }
     try {
       setBusy(true)
-      setStatus(`Uploading ${uploadFile.name} to ${indexName}...`)
+      setLoadingMessage(`Uploading ${uploadFile.name}...`)
       const presign = await apiFetch<PresignedUploadResponse>('/SFRAG/uploads/presign', {
         method: 'POST',
         body: JSON.stringify({
@@ -321,9 +392,12 @@ function App() {
       if (finalJob.status !== 'completed') {
         throw new Error('Ingest job did not complete in time.')
       }
-      setStatus(`Indexed ${uploadFile.name} in ${indexName} as ${finalJob.result?.category ?? 'uncategorized'}.`)
       setUploadFile(null)
       await refreshDocuments(indexName)
+      pushToast(
+        `Indexed ${uploadFile.name} as ${finalJob.result?.category ?? 'uncategorized'}.`,
+        'success',
+      )
     } catch (error) {
       try {
         const fallbackForm = new FormData()
@@ -337,14 +411,15 @@ function App() {
         if (!fallbackResponse.ok || fallbackPayload.status === 'Error') {
           throw new Error(fallbackPayload.detail || fallbackPayload.message || 'Upload failed.')
         }
-        setStatus(`Indexed ${uploadFile.name} in ${indexName} as ${fallbackPayload.category}.`)
         setUploadFile(null)
         await refreshDocuments(indexName)
+        pushToast(`Indexed ${uploadFile.name} as ${fallbackPayload.category}.`, 'success')
       } catch (fallbackError) {
-        setStatus(fallbackError instanceof Error ? fallbackError.message : String(error))
+        pushToast(fallbackError instanceof Error ? fallbackError.message : String(error), 'error')
       }
     } finally {
       setBusy(false)
+      setLoadingMessage('Ready')
     }
   }
 
@@ -357,7 +432,7 @@ function App() {
   async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!feedbackUserId.trim() || !feedbackText.trim()) {
-      setStatus('Feedback needs both your ID and a short note.')
+      pushToast('Feedback needs both your ID and a short note.', 'error')
       return
     }
     try {
@@ -372,11 +447,20 @@ function App() {
       })
       localStorage.setItem(FEEDBACK_USER_KEY, feedbackUserId.trim())
       setFeedbackText('')
-      setStatus('Feedback submitted. Thank you.')
+      pushToast('Feedback submitted. Thank you.', 'success')
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Feedback submission failed.')
+      pushToast(error instanceof Error ? error.message : 'Feedback submission failed.', 'error')
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function copyMessage(content: string) {
+    try {
+      await navigator.clipboard.writeText(content)
+      pushToast('Response copied to clipboard.', 'success')
+    } catch {
+      pushToast('Copy failed on this browser.', 'error')
     }
   }
 
@@ -385,10 +469,12 @@ function App() {
     const normalizedWorkspace = normalizeWorkspace(storedWorkspace || generateWorkspaceName())
     const storedMode = localStorage.getItem(ACTIVE_WORKSPACE_KEY)
     const storedUserId = localStorage.getItem(FEEDBACK_USER_KEY)
+    const storedTheme = localStorage.getItem(THEME_KEY)
     setPersonalWorkspace(normalizedWorkspace)
     setWorkspaceDraft(normalizedWorkspace)
     setActiveWorkspace(storedMode === 'shared' ? 'shared' : 'personal')
     setFeedbackUserId(storedUserId ?? '')
+    setTheme(storedTheme === 'dark' ? 'dark' : 'light')
   }, [])
 
   useEffect(() => {
@@ -413,7 +499,13 @@ function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="panel">
+        <div className="panel brand-panel">
+          <div className="brand-row">
+            <img className="brand-logo" src={logoSrc} alt="RAG demo logo" />
+            <button className="ghost-button theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
+              {theme === 'light' ? 'Dark mode' : 'Light mode'}
+            </button>
+          </div>
           <div className="panel-head">
             <div>
               <p className="eyebrow">MVP Console</p>
@@ -423,7 +515,6 @@ function App() {
               New
             </button>
           </div>
-
           <div className="workspace-switcher">
             <button
               className={`workspace-tab ${!isSharedWorkspace ? 'active' : ''}`}
@@ -438,7 +529,6 @@ function App() {
               Shared demo
             </button>
           </div>
-
           <label className="field">
             <span>{isSharedWorkspace ? 'Shared workspace' : 'Personal workspace'}</span>
             <input
@@ -455,31 +545,60 @@ function App() {
           </p>
         </div>
 
+        <div className="panel current-thread-panel">
+          <div className="panel-head tight">
+            <h2>Current chat</h2>
+            <span className="current-thread-badge">{activeThread ? 'Active' : 'Idle'}</span>
+          </div>
+          {activeThread ? (
+            <div className="current-thread-summary">
+              <strong>{summarizeThread(activeThread)}</strong>
+              <span>{new Date(activeThread.createdAt).toLocaleString()}</span>
+            </div>
+          ) : (
+            <p className="history-empty">Start a new chat to create the active thread.</p>
+          )}
+        </div>
+
         <div className="panel grow">
           <div className="panel-head">
             <h2>History</h2>
           </div>
-          <div className="thread-list">
+          <div className="thread-list" ref={menuContainerRef}>
             {historicalThreads.length === 0 ? <p className="history-empty">Past chats will appear here.</p> : null}
             {historicalThreads.map((thread) => (
               <div key={thread.id} className={`thread-item ${thread.id === activeThreadId ? 'active' : ''}`}>
                 <button className="thread-link" onClick={() => void openThread(thread.id)}>
-                  <strong>{thread.name || 'New chat'}</strong>
+                  <strong>{summarizeThread(thread)}</strong>
                   <span>{new Date(thread.createdAt).toLocaleString()}</span>
                 </button>
                 <div className="thread-actions">
                   <button
-                    className="menu-button"
+                    className="menu-button kebab-button"
                     aria-label="Thread actions"
                     onClick={() => setOpenMenuThreadId((current) => (current === thread.id ? null : thread.id))}
                   >
-                    ⋮
+                    <span />
+                    <span />
+                    <span />
                   </button>
                   {openMenuThreadId === thread.id ? (
                     <div className="thread-menu">
-                      <button className="thread-menu-item delete" onClick={() => void handleDeleteThread(thread.id)}>
-                        Delete chat
-                      </button>
+                      {confirmDeleteThreadId === thread.id ? (
+                        <>
+                          <p className="thread-menu-copy">Delete this chat history?</p>
+                          <button className="thread-menu-item delete" onClick={() => void handleDeleteThread(thread.id)}>
+                            Confirm delete
+                          </button>
+                          <button className="thread-menu-item" onClick={() => setConfirmDeleteThreadId(null)}>
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button className="thread-menu-item delete" onClick={() => setConfirmDeleteThreadId(thread.id)}>
+                          Delete chat
+                        </button>
+                      )}
                     </div>
                   ) : null}
                 </div>
@@ -515,6 +634,10 @@ function App() {
             <p className="eyebrow">Cost-lean local implementation</p>
             <h2>{isSharedWorkspace ? 'Explore shared demo documents safely' : 'Upload docs and test your own isolated workspace'}</h2>
             <p className="helper-text strong">Active workspace: {indexName}</p>
+            <div className="workspace-meta-row">
+              <span className="hero-badge">{isSharedWorkspace ? 'Read-only' : 'Read / Write'}</span>
+              <span className="hero-badge subtle">{loadingMessage}</span>
+            </div>
           </div>
           <form className="upload-form" onSubmit={(event) => void handleUpload(event)}>
             <input
@@ -524,7 +647,7 @@ function App() {
               onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
             />
             <button type="submit" disabled={busy || !uploadFile || isSharedWorkspace}>
-              {isSharedWorkspace ? 'Read-only' : 'Upload'}
+              {busy ? 'Working...' : isSharedWorkspace ? 'Read-only' : 'Upload'}
             </button>
           </form>
         </section>
@@ -532,7 +655,14 @@ function App() {
         <section className="content-grid">
           <div className="chat-card">
             <div className="chat-log" ref={chatLogRef}>
-              {messages.length === 0 ? (
+              {busy && messages.length === 0 ? (
+                <div className="chat-skeleton">
+                  <div className="skeleton-line wide" />
+                  <div className="skeleton-line" />
+                  <div className="skeleton-line short" />
+                </div>
+              ) : null}
+              {messages.length === 0 && !busy ? (
                 <div className="empty-state">
                   {isSharedWorkspace
                     ? 'Ask questions against the shared demo workspace.'
@@ -541,8 +671,27 @@ function App() {
               ) : (
                 orderedMessages.map((message, index) => (
                   <article key={`${message.role}-${index}`} className={`bubble ${message.role}`}>
-                    <span>{message.role === 'user' ? 'You' : 'Assistant'}</span>
-                    <p>{message.content}</p>
+                    <div className="bubble-topline">
+                      <div className="bubble-identity">
+                        <div className={`avatar ${message.role}`}>{message.role === 'user' ? 'U' : 'AI'}</div>
+                        <div>
+                          <span>{message.role === 'user' ? 'You' : 'Assistant'}</span>
+                          <small>{formatTimestamp(message.timestamp)}</small>
+                        </div>
+                      </div>
+                      {message.role === 'assistant' ? (
+                        <button className="copy-button" onClick={() => void copyMessage(message.content)}>
+                          Copy
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="bubble-body">
+                      {message.role === 'assistant' ? (
+                        <ReactMarkdown>{message.content}</ReactMarkdown>
+                      ) : (
+                        <p>{message.content}</p>
+                      )}
+                    </div>
                   </article>
                 ))
               )}
@@ -574,7 +723,7 @@ function App() {
                 placeholder="Ask about coverage, claims, policy details, or similar support tickets..."
               />
               <button type="submit" disabled={busy || !question.trim()}>
-                {busy ? 'Working...' : 'Send'}
+                {busy ? 'Thinking...' : 'Send'}
               </button>
             </form>
           </div>
@@ -624,7 +773,13 @@ function App() {
           </div>
         </section>
 
-        <footer className="status-bar">{status}</footer>
+        <div className="toast-stack" aria-live="polite">
+          {toasts.map((toast) => (
+            <div key={toast.id} className={`toast ${toast.tone}`}>
+              {toast.message}
+            </div>
+          ))}
+        </div>
       </main>
 
       {showUploadWarning ? (
@@ -641,7 +796,7 @@ function App() {
                 className="ghost-button"
                 onClick={() => {
                   setShowUploadWarning(false)
-                  setStatus('Upload cancelled.')
+                  pushToast('Upload cancelled.', 'info')
                 }}
               >
                 Cancel
