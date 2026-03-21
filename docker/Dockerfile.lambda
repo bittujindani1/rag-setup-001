@@ -3,8 +3,9 @@ FROM public.ecr.aws/sam/build-python3.11 AS builder
 WORKDIR /build
 
 COPY ["docker/rag_api_build/requirements.txt", "./"]
+COPY ["docker/rag_api_build/constraints.txt", "./"]
 RUN python -m pip install --upgrade pip \
-    && python -m pip install --no-cache-dir -r requirements.txt -t /build/python
+    && PIP_CONSTRAINT=/build/constraints.txt python -m pip install --no-cache-dir -r requirements.txt -t /build/python
 
 FROM public.ecr.aws/lambda/python:3.11
 
