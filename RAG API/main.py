@@ -5,6 +5,7 @@ import re
 import shutil
 import asyncio
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime
@@ -76,6 +77,14 @@ MAX_QUERY_LENGTH = 2000
 INDEX_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{2,63}$")
 THREAD_TABLE_NAME = os.getenv("DYNAMODB_THREAD_TABLE", "rag_chat_threads")
 thread_store = DynamoDBThreadStore(table_name=THREAD_TABLE_NAME, region_name=os.getenv("AWS_REGION", "ap-south-1"))
+TEMP_ROOT = Path(tempfile.gettempdir()) / "rag_serverless"
+
+
+def _ensure_temp_dir(*parts: str) -> Path:
+    path = TEMP_ROOT.joinpath(*parts)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
  
 prefix1 = "SFRAG"
  
@@ -189,8 +198,7 @@ def _filter_docs_by_filename(docs: list, filename: str | None) -> list:
 def _download_s3_object_to_temp(index_name: str, s3_key: str, content_type: str | None) -> tuple[str, bytes, str, str]:
     config = get_config()
     filename = os.path.basename(s3_key)
-    temp_dir = Path(os.getcwd()) / "s3_ingest_tmp" / uuid.uuid4().hex
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = _ensure_temp_dir("s3_ingest_tmp", uuid.uuid4().hex)
     local_path = temp_dir / filename
     s3_client = boto3.client("s3", region_name=config["aws_region"])
     s3_client.download_file(config["s3_bucket_documents"], s3_key, str(local_path))
@@ -312,12 +320,8 @@ def _ingest_local_file(
     image_summaries = []
     text_summaries = []
     table_summaries = []
-    base_dir = os.getcwd()
-    base_output_dir = os.path.join(base_dir, "image_files")
-    temp_dir_root = os.path.join(base_dir, "pdf_files")
-
-    os.makedirs(base_output_dir, exist_ok=True)
-    os.makedirs(temp_dir_root, exist_ok=True)
+    base_output_dir = _ensure_temp_dir("image_files")
+    temp_dir_root = _ensure_temp_dir("pdf_files")
 
     dynamic_output_dir = None
     temp_pdf_pathbase = None
@@ -325,10 +329,8 @@ def _ingest_local_file(
 
     try:
         unique_id = str(uuid.uuid4())
-        dynamic_output_dir = os.path.join(base_output_dir, unique_id)
-        temp_pdf_pathbase = os.path.join(temp_dir_root, unique_id)
-        os.makedirs(dynamic_output_dir, exist_ok=True)
-        os.makedirs(temp_pdf_pathbase, exist_ok=True)
+        dynamic_output_dir = str(_ensure_temp_dir("image_files", unique_id))
+        temp_pdf_pathbase = str(_ensure_temp_dir("pdf_files", unique_id))
 
         extension = normalize_extension(file_name)
         file_size = len(file_bytes)
@@ -821,8 +823,7 @@ def ingest_document(
             assert file is not None
             file_bytes = file.file.read()
             content_type = file.content_type or ""
-            temp_dir = Path(os.getcwd()) / "direct_ingest_tmp" / uuid.uuid4().hex
-            temp_dir.mkdir(parents=True, exist_ok=True)
+            temp_dir = _ensure_temp_dir("direct_ingest_tmp", uuid.uuid4().hex)
             local_path = str(temp_dir / file.filename)
             Path(local_path).write_bytes(file_bytes)
             if normalize_extension(file.filename) == ".pdf":
@@ -877,8 +878,7 @@ def ingest_tickets(index_name: str = Form(...), file: UploadFile = File(...)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    temp_dir = Path(os.getcwd()) / "ticket_ingest_tmp" / uuid.uuid4().hex
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = _ensure_temp_dir("ticket_ingest_tmp", uuid.uuid4().hex)
     local_path = temp_dir / file.filename
     local_path.write_bytes(file_bytes)
 
