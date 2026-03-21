@@ -330,6 +330,13 @@ def _markdown_count_table(title: str, counts: dict[str, int]) -> str:
     return "\n".join(lines)
 
 
+def _markdown_two_column_table(title: str, left_label: str, right_label: str, rows: list[tuple[str, int]]) -> str:
+    lines = [title, "", f"| {left_label} | {right_label} |", "| --- | ---: |"]
+    for key, count in rows:
+        lines.append(f"| {key} | {count} |")
+    return "\n".join(lines)
+
+
 def _ticket_analytics_response(query: str, index_name: str) -> str | None:
     if index_name != "snow_idx":
         return None
@@ -345,12 +352,28 @@ def _ticket_analytics_response(query: str, index_name: str) -> str | None:
             counts[group] = counts.get(group, 0) + 1
         return _markdown_count_table("Assignment groups by ticket volume", counts)
 
-    if "categor" in lowered and any(term in lowered for term in ("most", "top")):
+    if "categor" in lowered and any(term in lowered for term in ("all", "show", "list", "most", "top", "incident")):
         counts: dict[str, int] = {}
         for row in rows:
             category = row.get("category", "unknown")
             counts[category] = counts.get(category, 0) + 1
-        return _markdown_count_table("Ticket categories by volume", counts)
+        return _markdown_count_table("Incident categories in the ServiceNow dataset", counts)
+
+    if "identity" in lowered and any(term in lowered for term in ("common", "issues", "issue", "problem", "patterns")):
+        identity_rows = [row for row in rows if (row.get("category") or "").strip().lower() == "identity"]
+        if not identity_rows:
+            return None
+        summary_counts: dict[str, int] = {}
+        for row in identity_rows:
+            summary = row.get("summary", "unknown")
+            summary_counts[summary] = summary_counts.get(summary, 0) + 1
+        common_rows = sorted(summary_counts.items(), key=lambda item: (-item[1], item[0]))
+        return _markdown_two_column_table(
+            "Common identity-related issues",
+            "Issue Summary",
+            "Ticket Count",
+            common_rows,
+        )
 
     if "priority" in lowered and any(term in lowered for term in ("most", "top")):
         counts: dict[str, int] = {}
@@ -366,7 +389,26 @@ def _ticket_analytics_response(query: str, index_name: str) -> str | None:
             counts[source] = counts.get(source, 0) + 1
         return _markdown_count_table("Ticket sources by volume", counts)
 
-    if "table format" in lowered or "show a table" in lowered:
+    if "summar" in lowered and any(term in lowered for term in ("top", "recurring", "common", "most")):
+        summary_counts: dict[str, int] = {}
+        for row in rows:
+            summary = row.get("summary", "unknown")
+            summary_counts[summary] = summary_counts.get(summary, 0) + 1
+        recurring_rows = sorted(summary_counts.items(), key=lambda item: (-item[1], item[0]))
+        return _markdown_two_column_table(
+            "Top recurring ticket summaries",
+            "Summary",
+            "Ticket Count",
+            recurring_rows,
+        )
+
+    if any(phrase in lowered for phrase in ("ticket sample", "sample tickets", "show sample tickets")) or (
+        ("table format" in lowered or "show a table" in lowered)
+        and not any(
+            keyword in lowered
+            for keyword in ("assignment group", "categor", "priority", "source", "identity", "summar")
+        )
+    ):
         selected = rows[:10]
         lines = [
             "Ticket sample",
