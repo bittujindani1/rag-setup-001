@@ -10,11 +10,81 @@ import boto3
 import logging
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.exceptions import ClientError
-from chainlit.data.base import BaseDataLayer
-from chainlit.element import ElementDict
-from chainlit.step import StepDict
-from chainlit.types import Feedback, PageInfo, PaginatedResponse, Pagination, ThreadDict, ThreadFilter
-from chainlit.user import PersistedUser, User
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from chainlit.data.base import BaseDataLayer
+    from chainlit.element import ElementDict
+    from chainlit.step import StepDict
+    from chainlit.types import Feedback, PageInfo, PaginatedResponse, Pagination, ThreadDict, ThreadFilter
+    from chainlit.user import PersistedUser, User
+else:
+    try:
+        from chainlit.data.base import BaseDataLayer
+        from chainlit.element import ElementDict
+        from chainlit.step import StepDict
+        from chainlit.types import Feedback, PageInfo, PaginatedResponse, Pagination, ThreadDict, ThreadFilter
+        from chainlit.user import PersistedUser, User
+    except ModuleNotFoundError:
+        class StepDict(TypedDict, total=False):
+            id: str
+            threadId: str
+            type: str
+            name: str
+            output: str
+            input: str
+            createdAt: str
+            streaming: bool
+
+        class ThreadDict(TypedDict, total=False):
+            id: str
+            createdAt: str
+            updatedAt: str
+            name: str
+            userId: str
+            userIdentifier: str
+            tags: list
+            metadata: dict
+            steps: list
+            elements: list
+
+        class Feedback(TypedDict, total=False):
+            id: str
+            threadId: str
+            forId: str
+
+        class Pagination(TypedDict, total=False):
+            first: int
+            cursor: str | None
+
+        class ThreadFilter(TypedDict, total=False):
+            userId: str | None
+            search: str | None
+
+        class PageInfo(TypedDict, total=False):
+            hasNextPage: bool
+            startCursor: str | None
+            endCursor: str | None
+
+        class PaginatedResponse(dict):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+
+        class PersistedUser(TypedDict, total=False):
+            id: str
+            identifier: str
+            createdAt: str
+            metadata: dict
+
+        class User(TypedDict, total=False):
+            identifier: str
+            metadata: dict
+
+        class ElementDict(TypedDict, total=False):
+            id: str
+
+        class BaseDataLayer:
+            pass
 
 
 LOGGER = logging.getLogger(__name__)
