@@ -1,6 +1,6 @@
 from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain.storage import InMemoryStore
-from langchain.schema import Document
+from langchain_core.documents import Document
 import uuid
 import urllib
 import sys

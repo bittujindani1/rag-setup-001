@@ -2,7 +2,7 @@
 import base64
 import re
 from PIL import Image
-from langchain.schema import Document
+from langchain_core.documents import Document
 import io
 from langchain_core.messages import HumanMessage
 

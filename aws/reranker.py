@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Iterable, List
 
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 
 LOGGER = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 import sys
 import uuid
 
-from langchain.schema import Document
+from langchain_core.documents import Document
 
 from aws.metrics import MetricsCollector
 from aws.s3_vector_store import S3VectorStore

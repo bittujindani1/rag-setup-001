@@ -34,6 +34,28 @@ resource "aws_ecr_repository" "rag_api" {
   }
 }
 
+data "aws_iam_policy_document" "rag_api_ecr_policy" {
+  statement {
+    sid    = "AllowLambdaPull"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+
+    actions = [
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+    ]
+  }
+}
+
+resource "aws_ecr_repository_policy" "rag_api" {
+  repository = aws_ecr_repository.rag_api.name
+  policy     = data.aws_iam_policy_document.rag_api_ecr_policy.json
+}
+
 resource "aws_s3_bucket_cors_configuration" "documents" {
   bucket = aws_s3_bucket.documents.id
 
@@ -376,4 +398,11 @@ resource "aws_lambda_permission" "allow_function_url" {
   function_name          = aws_lambda_function.rag_api.function_name
   principal              = "*"
   function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "allow_function_url_invoke" {
+  statement_id           = "AllowPublicInvokeViaFunctionUrl"
+  action                 = "lambda:InvokeFunction"
+  function_name          = aws_lambda_function.rag_api.function_name
+  principal              = "*"
 }

@@ -10,7 +10,7 @@ from typing import Dict, Iterable, List
 import boto3
 import numpy as np
 from botocore.exceptions import ClientError
-from langchain.schema import Document
+from langchain_core.documents import Document
 from aws.metrics import MetricsCollector
 
 

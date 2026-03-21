@@ -10,7 +10,7 @@ from langchain_core.retrievers import BaseRetriever
 from requests_aws4auth import AWS4Auth
 from opensearchpy import RequestsHttpConnection
 from langchain.vectorstores import OpenSearchVectorSearch
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
 from langchain_openai import AzureOpenAIEmbeddings
