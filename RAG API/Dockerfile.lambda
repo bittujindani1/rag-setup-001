@@ -2,7 +2,7 @@ FROM public.ecr.aws/lambda/python:3.11
 
 WORKDIR ${LAMBDA_TASK_ROOT}
 
-COPY "RAG API/requirements.txt" ./
+COPY ["RAG API/requirements.txt", "./"]
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r requirements.txt
 
@@ -11,6 +11,6 @@ COPY config ./config
 COPY config_loader.py ./config_loader.py
 COPY env_bootstrap.py ./env_bootstrap.py
 COPY provider_factory.py ./provider_factory.py
-COPY "RAG API/" ./
+COPY ["RAG API/", "./"]
 
 CMD ["lambda_handler.handler"]
