@@ -1,11 +1,10 @@
-from langchain.storage import InMemoryStore
 from langchain_core.documents import Document
 import uuid
 import urllib
 import sys
 from pathlib import Path
 from langchain_community.utilities.redis import get_client
-from langchain.storage import RedisStore
+from langchain_community.storage import RedisStore
 import os
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
