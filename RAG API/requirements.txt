@@ -28,6 +28,6 @@ redis
 langchain_redis
 PyPDF2
 rank-bm25
-PyMuPDF
+PyMuPDF==1.24.14
 python-docx
 openpyxl
