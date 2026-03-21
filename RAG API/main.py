@@ -60,7 +60,9 @@ from provider_factory import (
     get_cache_manager,
     get_config,
     get_document_category_store,
+    get_doc_store,
     get_feedback_store,
+    get_filename_index,
     get_ingest_job_store,
     get_metrics_collector,
     get_rate_limiter,
@@ -294,6 +296,91 @@ def _smart_infer_category(file_name: str, text_samples: list[str]) -> str:
     model_output = get_bedrock_client().generate_text(prompt=prompt, max_tokens=20, temperature=0.0)
     category = _normalize_model_category(model_output.splitlines()[0] if model_output else "")
     return category or "general_document"
+
+
+def _load_ticket_rows(index_name: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for document in get_document_category_store().list_documents(index_name):
+        if document.get("source_type") != "support_tickets":
+            continue
+        filename = document.get("filename")
+        if not filename:
+            continue
+        doc_ids = get_filename_index().get_doc_ids(index_name, filename)
+        for offset in range(0, len(doc_ids), 100):
+            contents = get_doc_store().mget(doc_ids[offset : offset + 100])
+            for content in contents:
+                if not content or "ticket_id:" not in content:
+                    continue
+                parsed: dict[str, str] = {}
+                for line in content.splitlines():
+                    if ": " not in line:
+                        continue
+                    key, value = line.split(": ", 1)
+                    parsed[key.strip()] = value.strip()
+                if parsed.get("ticket_id"):
+                    rows.append(parsed)
+    return rows
+
+
+def _markdown_count_table(title: str, counts: dict[str, int]) -> str:
+    lines = [title, "", "| Value | Ticket Count |", "| --- | ---: |"]
+    for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
+        lines.append(f"| {key} | {count} |")
+    return "\n".join(lines)
+
+
+def _ticket_analytics_response(query: str, index_name: str) -> str | None:
+    if index_name != "snow_idx":
+        return None
+    lowered = (query or "").lower()
+    rows = _load_ticket_rows(index_name)
+    if not rows:
+        return None
+
+    if "assignment group" in lowered and any(term in lowered for term in ("most", "top", "handled")):
+        counts: dict[str, int] = {}
+        for row in rows:
+            group = row.get("assignment_group", "unknown")
+            counts[group] = counts.get(group, 0) + 1
+        return _markdown_count_table("Assignment groups by ticket volume", counts)
+
+    if "categor" in lowered and any(term in lowered for term in ("most", "top")):
+        counts: dict[str, int] = {}
+        for row in rows:
+            category = row.get("category", "unknown")
+            counts[category] = counts.get(category, 0) + 1
+        return _markdown_count_table("Ticket categories by volume", counts)
+
+    if "priority" in lowered and any(term in lowered for term in ("most", "top")):
+        counts: dict[str, int] = {}
+        for row in rows:
+            priority = row.get("priority", "unknown")
+            counts[priority] = counts.get(priority, 0) + 1
+        return _markdown_count_table("Ticket priorities by volume", counts)
+
+    if "source" in lowered and any(term in lowered for term in ("most", "top", "compare")):
+        counts: dict[str, int] = {}
+        for row in rows:
+            source = row.get("source", "unknown")
+            counts[source] = counts.get(source, 0) + 1
+        return _markdown_count_table("Ticket sources by volume", counts)
+
+    if "table format" in lowered or "show a table" in lowered:
+        selected = rows[:10]
+        lines = [
+            "Ticket sample",
+            "",
+            "| Ticket ID | Category | Priority | Assignment Group | Status | Summary |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for row in selected:
+            lines.append(
+                f"| {row.get('ticket_id', '')} | {row.get('category', '')} | {row.get('priority', '')} | {row.get('assignment_group', '')} | {row.get('status', '')} | {row.get('summary', '')} |"
+            )
+        return "\n".join(lines)
+
+    return None
 
 
 def _index_text_document(
@@ -728,6 +815,49 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
         )
     cache_manager = get_cache_manager() if config.get("cache") == "dynamodb" else None
     cache_key = None
+    ticket_analytics_answer = _ticket_analytics_response(
+        query_request.user_query,
+        query_request.index_name,
+    )
+    if ticket_analytics_answer:
+        direct_response = {
+            "mode": "answer",
+            "response": {
+                "content": ticket_analytics_answer,
+            },
+            "citation": [
+                {
+                    "type": "TEXT",
+                    "filename": "servicenow_tickets.csv",
+                    "document_id": "servicenow_tickets.csv",
+                    "section_id": "servicenow_tickets.csv:summary",
+                    "page_numbers": ["1"],
+                    "url": ["N/A"],
+                    "pdf_url": "servicenow_tickets.csv",
+                    "text": "ServiceNow dataset analytics generated from all indexed ticket rows in snow_idx.",
+                }
+            ],
+            "selected_category": None,
+        }
+        if query_request.thread_id:
+            thread_store.save_message(
+                thread_id=query_request.thread_id,
+                role="user",
+                content=query_request.user_query,
+                user_id="demo",
+                user_identifier="demo",
+                thread_name=(query_request.user_query or "New chat")[:80],
+            )
+            thread_store.save_message(
+                thread_id=query_request.thread_id,
+                role="assistant",
+                content=ticket_analytics_answer,
+                user_id="demo",
+                user_identifier="demo",
+                thread_name=(query_request.user_query or "New chat")[:80],
+            )
+        return JSONResponse(content=direct_response)
+
     if cache_manager:
         cache_key = cache_manager.build_cache_key(
             query=f"{query_request.user_query}|selected_category={query_request.selected_category or ''}",
