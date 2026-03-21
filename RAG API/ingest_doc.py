@@ -1,4 +1,3 @@
-from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain.storage import InMemoryStore
 from langchain_core.documents import Document
 import uuid
@@ -51,6 +50,7 @@ def create_multi_vector_retriever(
     if config.get("vector_store") == "s3" or config.get("doc_store") == "dynamodb":
         retriever = _RetrieverAdapter(vectorstore=vectorstore, docstore=store)
     else:
+        from langchain.retrievers.multi_vector import MultiVectorRetriever
         retriever = MultiVectorRetriever(
             vectorstore=vectorstore,
             docstore=store,

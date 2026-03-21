@@ -5,13 +5,11 @@ import urllib
 import os
 import sys
 from pathlib import Path
-from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain_core.retrievers import BaseRetriever
 from requests_aws4auth import AWS4Auth
 from opensearchpy import RequestsHttpConnection
 from langchain.vectorstores import OpenSearchVectorSearch
 from langchain_core.documents import Document
-from langchain.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
 from langchain_openai import AzureOpenAIEmbeddings
 from pydantic import ConfigDict
@@ -77,6 +75,8 @@ def create_retriever(index_name: str):
     if not (embedding_function and OPENSEARCH_URL and awsauth and redis_url):
         raise RuntimeError("OpenSearch/Redis retriever dependencies are not configured.")
 
+    from langchain.retrievers.multi_vector import MultiVectorRetriever
+
     # Initialize the vectorstore
     vectorstore = OpenSearchVectorSearch(
         index_name=index_name,
@@ -141,10 +141,38 @@ def create_ensemble_retriever(vectorstore_retriever, query):
         async def _aget_relevant_documents(self, query: str, *, run_manager=None):
             return list(self.documents)
 
-    # Step 3: Combine both retrievers in an EnsembleRetriever
-    ensemble_retriever = EnsembleRetriever(
-        retrievers=[StaticDocumentRetriever(documents=document_objects), keyword_retriever],
-        weights=[0.3, 0.7]
+    class LightweightEnsembleRetriever(BaseRetriever):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+        primary: BaseRetriever
+        secondary: BaseRetriever
+
+        def _merge(self, primary_docs, secondary_docs):
+            merged = []
+            seen = set()
+            for doc in list(primary_docs) + list(secondary_docs):
+                key = (
+                    doc.metadata.get("chunk_id"),
+                    doc.metadata.get("document_id"),
+                    doc.page_content[:200],
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(doc)
+            return merged
+
+        def _get_relevant_documents(self, query: str, *, run_manager=None):
+            primary_docs = self.primary.get_relevant_documents(query)
+            secondary_docs = self.secondary.get_relevant_documents(query)
+            return self._merge(primary_docs, secondary_docs)
+
+        async def _aget_relevant_documents(self, query: str, *, run_manager=None):
+            return self._get_relevant_documents(query, run_manager=run_manager)
+
+    # Step 3: Combine both retrievers without depending on optional langchain.retrievers package.
+    ensemble_retriever = LightweightEnsembleRetriever(
+        primary=StaticDocumentRetriever(documents=document_objects),
+        secondary=keyword_retriever,
     )
     LOGGER.info("Created ensemble retriever query=%s", query)
     return ensemble_retriever
