@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import csv
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Iterable, List
 
@@ -302,25 +303,24 @@ def extract_ticket_chunks(file_path: str) -> List[str]:
     if extension == ".csv":
         with open(file_path, "r", encoding="utf-8", errors="ignore", newline="") as handle:
             reader = csv.DictReader(handle)
-            return [
+            rows = [row for row in reader]
+            return _build_ticket_summary_chunks(rows) + [
                 "\n".join(
                     f"{key}: {value}"
                     for key, value in row.items()
                     if value not in (None, "")
                 )
-                for row in reader
+                for row in rows
             ]
     if extension == ".json":
         payload = json.loads(Path(file_path).read_text(encoding="utf-8", errors="ignore"))
         if isinstance(payload, dict):
             payload = payload.get("tickets", [payload])
-        chunks: List[str] = []
-        for row in payload:
-            if isinstance(row, dict):
-                chunks.append(
-                    "\n".join(f"{key}: {value}" for key, value in row.items() if value not in (None, ""))
-                )
-        return chunks
+        rows = [row for row in payload if isinstance(row, dict)]
+        return _build_ticket_summary_chunks(rows) + [
+            "\n".join(f"{key}: {value}" for key, value in row.items() if value not in (None, ""))
+            for row in rows
+        ]
     raise ValueError(f"Ticket extraction not supported for '{extension}'.")
 
 
@@ -334,3 +334,50 @@ def _split_text(text: str) -> List[str]:
         separators=["\n\n", "\n", ". ", " ", ""],
     )
     return [chunk.strip() for chunk in splitter.split_text(cleaned) if chunk.strip()]
+
+
+def _build_ticket_summary_chunks(rows: List[dict]) -> List[str]:
+    if not rows:
+        return []
+
+    total_tickets = len(rows)
+    category_counts = Counter((row.get("category") or "unknown").strip() for row in rows)
+    priority_counts = Counter((row.get("priority") or "unknown").strip() for row in rows)
+    status_counts = Counter((row.get("status") or "unknown").strip() for row in rows)
+    source_counts = Counter((row.get("source") or "unknown").strip() for row in rows)
+    assignment_counts = Counter((row.get("assignment_group") or "unknown").strip() for row in rows)
+    summary_counts = Counter((row.get("summary") or "unknown").strip() for row in rows)
+
+    chunks = [
+        "\n".join(
+            [
+                f"ServiceNow ticket dataset overview",
+                f"Total tickets: {total_tickets}",
+                "Assignment groups by ticket volume:",
+                _counter_to_markdown_table(assignment_counts, "assignment_group", "ticket_count"),
+                "Categories by ticket volume:",
+                _counter_to_markdown_table(category_counts, "category", "ticket_count"),
+                "Priorities by ticket volume:",
+                _counter_to_markdown_table(priority_counts, "priority", "ticket_count"),
+            ]
+        ),
+        "\n".join(
+            [
+                "ServiceNow ticket operational summary",
+                "Statuses by ticket volume:",
+                _counter_to_markdown_table(status_counts, "status", "ticket_count"),
+                "Sources by ticket volume:",
+                _counter_to_markdown_table(source_counts, "source", "ticket_count"),
+                "Most common ticket summaries:",
+                _counter_to_markdown_table(summary_counts, "summary", "ticket_count"),
+            ]
+        ),
+    ]
+    return chunks
+
+
+def _counter_to_markdown_table(counter: Counter, label: str, value_label: str, limit: int = 10) -> str:
+    rows = [f"| {label} | {value_label} |", "| --- | ---: |"]
+    for key, count in counter.most_common(limit):
+        rows.append(f"| {key or 'unknown'} | {count} |")
+    return "\n".join(rows)
