@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -134,14 +134,28 @@ function App() {
   const [feedbackUserId, setFeedbackUserId] = useState('')
   const [feedbackText, setFeedbackText] = useState('')
   const [showUploadWarning, setShowUploadWarning] = useState(false)
+  const [openMenuThreadId, setOpenMenuThreadId] = useState<string | null>(null)
   const [status, setStatus] = useState('Ready')
   const [busy, setBusy] = useState(false)
+  const chatLogRef = useRef<HTMLDivElement | null>(null)
 
   const indexName = useMemo(
     () => (activeWorkspace === 'shared' ? SHARED_WORKSPACE : personalWorkspace),
     [activeWorkspace, personalWorkspace],
   )
   const isSharedWorkspace = activeWorkspace === 'shared'
+  const sortedThreads = useMemo(
+    () =>
+      [...threads].sort(
+        (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+      ),
+    [threads],
+  )
+  const historicalThreads = useMemo(
+    () => sortedThreads.filter((thread) => thread.id !== activeThreadId),
+    [activeThreadId, sortedThreads],
+  )
+  const orderedMessages = useMemo(() => [...messages].reverse(), [messages])
 
   async function refreshThreads(workspaceId = indexName) {
     const data = await apiFetch<{ threads: Thread[] }>(
@@ -192,10 +206,12 @@ function App() {
     setActiveThreadId(threadId)
     setSessionId(thread.metadata?.session_id ?? '')
     setMessages(mapStepsToMessages(thread))
+    setOpenMenuThreadId(null)
   }
 
   async function handleDeleteThread(threadId: string) {
     await apiFetch(`/SFRAG/threads/${threadId}?workspace_id=${encodeURIComponent(indexName)}`, { method: 'DELETE' })
+    setOpenMenuThreadId(null)
     const updated = await refreshThreads(indexName)
     if (activeThreadId === threadId) {
       setActiveThreadId(updated[0]?.id ?? null)
@@ -207,6 +223,12 @@ function App() {
       }
     }
   }
+
+  useEffect(() => {
+    if (chatLogRef.current) {
+      chatLogRef.current.scrollTop = 0
+    }
+  }, [orderedMessages])
 
   async function handleSend(rawQuestion?: string, forcedCategory?: string | null) {
     const finalQuestion = (rawQuestion ?? question).trim()
@@ -438,15 +460,29 @@ function App() {
             <h2>History</h2>
           </div>
           <div className="thread-list">
-            {threads.map((thread) => (
+            {historicalThreads.length === 0 ? <p className="history-empty">Past chats will appear here.</p> : null}
+            {historicalThreads.map((thread) => (
               <div key={thread.id} className={`thread-item ${thread.id === activeThreadId ? 'active' : ''}`}>
                 <button className="thread-link" onClick={() => void openThread(thread.id)}>
                   <strong>{thread.name || 'New chat'}</strong>
                   <span>{new Date(thread.createdAt).toLocaleString()}</span>
                 </button>
-                <button className="menu-button" onClick={() => void handleDeleteThread(thread.id)}>
-                  ...
-                </button>
+                <div className="thread-actions">
+                  <button
+                    className="menu-button"
+                    aria-label="Thread actions"
+                    onClick={() => setOpenMenuThreadId((current) => (current === thread.id ? null : thread.id))}
+                  >
+                    ⋮
+                  </button>
+                  {openMenuThreadId === thread.id ? (
+                    <div className="thread-menu">
+                      <button className="thread-menu-item delete" onClick={() => void handleDeleteThread(thread.id)}>
+                        Delete chat
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>
@@ -495,7 +531,7 @@ function App() {
 
         <section className="content-grid">
           <div className="chat-card">
-            <div className="chat-log">
+            <div className="chat-log" ref={chatLogRef}>
               {messages.length === 0 ? (
                 <div className="empty-state">
                   {isSharedWorkspace
@@ -503,7 +539,7 @@ function App() {
                     : 'Start a thread or upload a document to begin.'}
                 </div>
               ) : (
-                messages.map((message, index) => (
+                orderedMessages.map((message, index) => (
                   <article key={`${message.role}-${index}`} className={`bubble ${message.role}`}>
                     <span>{message.role === 'user' ? 'You' : 'Assistant'}</span>
                     <p>{message.content}</p>

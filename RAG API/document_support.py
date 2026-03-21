@@ -61,17 +61,69 @@ def validate_upload(filename: str, content_type: str, size_bytes: int) -> None:
 def infer_category(filename: str, sample_texts: Iterable[str]) -> str:
     combined = f"{filename}\n" + "\n".join(text for text in sample_texts if text)
     lowered = combined.lower()
-    rules = [
-        ("support_tickets", ("ticket", "incident", "servicenow", "outage", "resolution")),
-        ("medical_insurance", ("medical", "health", "hospital", "doctor", "patient")),
-        ("auto_insurance", ("auto", "vehicle", "car", "driver", "collision")),
-        ("travel_insurance", ("travel", "trip", "baggage", "flight", "journey")),
-        ("home_insurance", ("home", "property", "house", "dwelling")),
-        ("insurance", ("insurance", "policy", "coverage", "claim", "premium")),
-    ]
-    for category, keywords in rules:
-        if any(keyword in lowered for keyword in keywords):
-            return category
+    extension = normalize_extension(filename)
+    scoring_rules = {
+        "support_tickets": {
+            "keywords": (
+                "ticket",
+                "incident",
+                "servicenow",
+                "outage",
+                "resolution",
+                "short description",
+                "assignment group",
+                "opened by",
+                "caller",
+                "priority",
+                "severity",
+                "sla",
+            ),
+            "bonus": 0,
+        },
+        "medical_insurance": {
+            "keywords": ("medical", "health", "hospital", "doctor", "patient", "clinic", "prescription"),
+            "bonus": 0,
+        },
+        "auto_insurance": {
+            "keywords": ("auto", "vehicle", "car", "driver", "collision", "accident", "garage"),
+            "bonus": 0,
+        },
+        "travel_insurance": {
+            "keywords": ("travel", "trip", "baggage", "flight", "journey", "passport", "hotel"),
+            "bonus": 0,
+        },
+        "home_insurance": {
+            "keywords": ("home", "property", "house", "dwelling", "contents", "fire", "theft"),
+            "bonus": 0,
+        },
+        "insurance": {
+            "keywords": ("insurance", "policy", "coverage", "claim", "premium", "insured", "benefit"),
+            "bonus": 0,
+        },
+    }
+
+    scores = {}
+    for category, rule in scoring_rules.items():
+        score = sum(1 for keyword in rule["keywords"] if keyword in lowered) + int(rule.get("bonus", 0))
+        scores[category] = score
+
+    insurance_categories = ("medical_insurance", "auto_insurance", "travel_insurance", "home_insurance", "insurance")
+    insurance_signal = any(scores[category] > 0 for category in insurance_categories)
+
+    if extension == ".pdf":
+        scores["insurance"] += 2
+    if any(token in lowered for token in ("policy", "insurance", "coverage", "claim")):
+        scores["insurance"] += 3
+    if any(token in lowered for token in ("ticket", "servicenow", "assignment group", "short description")):
+        scores["support_tickets"] += 3
+    if insurance_signal and extension == ".pdf":
+        scores["support_tickets"] = max(0, scores["support_tickets"] - 3)
+
+    best_category = max(scores, key=scores.get)
+    if scores[best_category] > 0:
+        return best_category
+    if extension == ".pdf":
+        return "insurance"
     return "uncategorized"
 
 
