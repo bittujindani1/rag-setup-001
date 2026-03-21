@@ -147,6 +147,32 @@ def infer_category(filename: str, sample_texts: Iterable[str]) -> str:
     lowered = combined.lower()
     extension = normalize_extension(filename)
     scoring_rules = {
+        "cloud_costing": {
+            "keywords": (
+                "aws",
+                "amazon web services",
+                "monthly cost",
+                "monthly estimate",
+                "cost estimate",
+                "pricing",
+                "budget",
+                "forecast",
+                "finops",
+                "cloud cost",
+                "service name",
+                "estimated monthly",
+                "ec2",
+                "s3",
+                "lambda",
+                "cloudfront",
+                "dynamodb",
+                "fargate",
+                "bedrock",
+                "textract",
+                "api gateway",
+            ),
+            "bonus": 0,
+        },
         "support_tickets": {
             "keywords": (
                 "ticket",
@@ -196,8 +222,12 @@ def infer_category(filename: str, sample_texts: Iterable[str]) -> str:
 
     if extension == ".pdf":
         scores["insurance"] += 2
+    if extension == ".xlsx":
+        scores["cloud_costing"] += 2
     if any(token in lowered for token in ("policy", "insurance", "coverage", "claim")):
         scores["insurance"] += 3
+    if any(token in lowered for token in ("aws", "monthly cost", "pricing", "cost estimate", "service name", "estimated monthly")):
+        scores["cloud_costing"] += 3
     if any(token in lowered for token in ("ticket", "servicenow", "assignment group", "short description")):
         scores["support_tickets"] += 3
     if insurance_signal and extension == ".pdf":
