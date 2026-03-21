@@ -82,6 +82,9 @@ jobs:
         with:
           context: .
           file: ./docker/Dockerfile.lambda
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
           push: true
           tags: |
             ${{ steps.image-meta.outputs.image_uri_sha }}

@@ -30,7 +30,7 @@ resource "aws_ecr_repository" "rag_api" {
   image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
-    scan_on_push = true
+    scan_on_push = false
   }
 }
 
@@ -85,6 +85,7 @@ data "aws_iam_policy_document" "frontend_public_read" {
 resource "aws_s3_bucket_policy" "frontend_public_read" {
   bucket = aws_s3_bucket.frontend.id
   policy = data.aws_iam_policy_document.frontend_public_read.json
+  depends_on = [aws_s3_bucket_public_access_block.frontend]
 }
 
 resource "aws_s3_bucket" "vectors" {
@@ -332,7 +333,6 @@ resource "aws_lambda_function" "rag_api" {
 
   environment {
     variables = {
-      AWS_REGION                         = var.aws_region
       VECTOR_STORE                       = "s3"
       DOC_STORE                          = "dynamodb"
       CHAT_HISTORY_STORE                 = "dynamodb"
