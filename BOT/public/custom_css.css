@@ -1,0 +1,40 @@
+a[href*='https://github.com/Chainlit/chainlit'] {
+    visibility: hidden;
+  }
+  body {
+    font-family: 'Roboto', sans-serif;
+}
+
+/* button[aria-label="Copy"] {
+    display: none !important;
+} */
+
+
+button {
+    background-color: #c7cfc7;
+    color: rgb(19, 17, 19);
+}
+
+.chat-box {
+    border-radius: 10px;
+    padding: 15px;
+}
+
+/* Set a default font size for the whole app */
+body {
+    font-size: 14px; /* Adjust as needed */
+}
+
+/* Example for specific text components */
+.chat-message {
+    font-size: 13px; /* Adjust as needed */
+}
+
+/* Customize font size for headings, buttons, or any other specific elements */
+h1, h2, h3, h4 {
+    font-size: 18px; /* Adjust heading sizes */
+}
+
+button {
+    font-size: 12px; /* Adjust button text size */
+}
