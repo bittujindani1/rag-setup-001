@@ -12,6 +12,10 @@ These Git Bash scripts are the safe entrypoints for the local MVP deployment pip
 
 Use `cleanup_all.sh` only when you intentionally want to remove the AWS resources and save cost.
 
+If you do not want Docker on your local machine, use the GitHub Actions workflow in:
+
+- `.github/workflows/build-lambda-image.yml`
+
 ## Scripts
 
 - `preflight.sh`

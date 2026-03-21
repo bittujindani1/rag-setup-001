@@ -1,0 +1,81 @@
+name: Build Lambda Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'RAG API/**'
+      - 'aws/**'
+      - 'config/**'
+      - 'config_loader.py'
+      - 'env_bootstrap.py'
+      - 'provider_factory.py'
+      - 'terraform/variables.tf'
+      - '.github/workflows/build-lambda-image.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: rag-api
+  IMAGE_TAG: latest
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION || env.AWS_REGION }}
+
+      - name: Ensure ECR Repository Exists
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION || env.AWS_REGION }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || env.ECR_REPOSITORY }}
+        run: |
+          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AWS_REGION" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION"
+
+      - name: Login To Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set Image Metadata
+        id: image-meta
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || env.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ vars.IMAGE_TAG || env.IMAGE_TAG }}
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          IMAGE_URI_SHA="${REGISTRY}/${ECR_REPOSITORY}:${SHORT_SHA}"
+          IMAGE_URI_LATEST="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          echo "image_uri_sha=${IMAGE_URI_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_uri_latest=${IMAGE_URI_LATEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Set Up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build And Push Lambda Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./RAG API/Dockerfile.lambda
+          push: true
+          tags: |
+            ${{ steps.image-meta.outputs.image_uri_sha }}
+            ${{ steps.image-meta.outputs.image_uri_latest }}
+
+      - name: Print Image URIs
+        run: |
+          echo "Commit image: ${{ steps.image-meta.outputs.image_uri_sha }}"
+          echo "Latest image: ${{ steps.image-meta.outputs.image_uri_latest }}"

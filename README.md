@@ -241,3 +241,12 @@ terraform -chdir=terraform plan
 ```
 
 See the docs folder for architecture, deployment, cost, and developer notes.
+
+## GitHub Actions Image Build
+
+If you do not want Docker on your local machine, use the GitHub Actions workflow:
+
+- [build-lambda-image.yml](C:/Users/dhairya.jindani/Documents/AI-coe%20projects/Rag/.github/workflows/build-lambda-image.yml)
+- [README-ci.md](C:/Users/dhairya.jindani/Documents/AI-coe%20projects/Rag/.github/README-ci.md)
+
+This workflow builds the backend Lambda image in GitHub Actions and pushes it to ECR, so your laptop does not need Docker.
