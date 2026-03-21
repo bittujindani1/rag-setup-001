@@ -660,9 +660,70 @@ button {
   gap: 12px;
 }
 
+.composer-main {
+  display: grid;
+  gap: 8px;
+}
+
 .composer textarea {
   min-height: 82px;
   resize: vertical;
+}
+
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.image-attach-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--paper-strong);
+  color: var(--accent-strong);
+  cursor: pointer;
+}
+
+.image-attach-button input {
+  display: none;
+}
+
+.attachment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.attachment-pill span {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-clear {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.composer-hint {
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .chip-wrap {
@@ -951,6 +1012,10 @@ button {
   .composer {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .composer-toolbar {
+    align-items: flex-start;
   }
 
   .toast-stack {

@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 import logging
 import os
@@ -16,6 +18,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from metadata import create_image_metadata, create_table_metadata, create_text_metadata, preprocess_metadata
+from PIL import Image
 from pydantic import BaseModel
 from requests_aws4auth import AWS4Auth
 
@@ -80,6 +83,13 @@ warnings.filterwarnings('ignore')
 LOGGER = logging.getLogger(__name__)
 MAX_QUERY_LENGTH = 2000
 INDEX_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{2,63}$")
+CHAT_IMAGE_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+}
+MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
 THREAD_TABLE_NAME = os.getenv("DYNAMODB_THREAD_TABLE", "rag_chat_threads")
 thread_store = DynamoDBThreadStore(table_name=THREAD_TABLE_NAME, region_name=os.getenv("AWS_REGION", "ap-south-1"))
 TEMP_ROOT = Path(tempfile.gettempdir()) / "rag_serverless"
@@ -261,6 +271,71 @@ class FeedbackRequest(BaseModel):
     user_id: str
     workspace_id: str
     feedback: str
+
+
+def _match_direct_intent(query: str) -> str | None:
+    lowered = (query or "").strip().lower()
+    if not lowered:
+        return "Please type a question about your uploaded documents or tickets."
+    if lowered in {"hi", "hello", "hey", "good morning", "good afternoon", "good evening"}:
+        return "Hello. Ask about your uploaded documents, insurance content, or ServiceNow tickets and I will help."
+    if lowered in {"thanks", "thank you", "ok thanks", "great thanks", "got it", "understood"}:
+        return "You’re welcome. Ask another question whenever you’re ready."
+    if lowered in {"bye", "goodbye", "see you", "thanks bye", "exit"}:
+        return "Session closed on my side. You can come back with another document or ticket question anytime."
+    return None
+
+
+def _json_from_text(raw_text: str) -> dict | None:
+    if not raw_text:
+        return None
+    start = raw_text.find("{")
+    end = raw_text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        return json.loads(raw_text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+def _image_to_png_base64(file_bytes: bytes) -> str:
+    with Image.open(io.BytesIO(file_bytes)) as image:
+        converted = image.convert("RGB")
+        buffer = io.BytesIO()
+        converted.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def _extract_query_from_image(file_bytes: bytes, prompt_hint: str | None = None) -> dict[str, str]:
+    encoded_image = _image_to_png_base64(file_bytes)
+    system_prompt = (
+        "You are extracting a user question from an uploaded screenshot or image for a RAG assistant.\n"
+        "Return only JSON with keys: extracted_text, intent, retrieval_query.\n"
+        "intent must be one of greeting, acknowledgement, farewell, retrieval.\n"
+        "retrieval_query should be the cleanest searchable version of the user’s actual question.\n"
+        "If the image is mostly tabular or ticket data and the user is asking for counts, categories, or trends, keep that analytic request explicit.\n"
+        "If the image contains no clear question, infer the most likely question from visible text.\n"
+    )
+    text_prompt = "Extract the question from this image and return only JSON."
+    if prompt_hint:
+        text_prompt += f"\nUser note: {prompt_hint}"
+    model_output = get_bedrock_client().generate_multimodal_text(
+        text_prompt=text_prompt,
+        images_base64=[encoded_image],
+        system_prompt=system_prompt,
+        max_tokens=400,
+        temperature=0.0,
+    )
+    payload = _json_from_text(model_output) or {}
+    extracted_text = str(payload.get("extracted_text") or "").strip()
+    intent = str(payload.get("intent") or "retrieval").strip().lower()
+    retrieval_query = str(payload.get("retrieval_query") or extracted_text or prompt_hint or "").strip()
+    return {
+        "extracted_text": extracted_text,
+        "intent": intent if intent in {"greeting", "acknowledgement", "farewell", "retrieval"} else "retrieval",
+        "retrieval_query": retrieval_query,
+    }
 
 
 def _workspace_document_count(index_name: str) -> int:
@@ -844,6 +919,36 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
                 "index_name": query_request.index_name,
             },
         )
+
+    direct_intent_answer = _match_direct_intent(query_request.user_query)
+    if direct_intent_answer:
+        full_response = {
+            "mode": "answer",
+            "response": {
+                "content": direct_intent_answer,
+            },
+            "citation": [],
+            "selected_category": None,
+        }
+        if query_request.thread_id:
+            thread_store.save_message(
+                thread_id=query_request.thread_id,
+                role="user",
+                content=query_request.user_query,
+                user_id="demo",
+                user_identifier="demo",
+                thread_name=(query_request.user_query or "New chat")[:80],
+            )
+            thread_store.save_message(
+                thread_id=query_request.thread_id,
+                role="assistant",
+                content=direct_intent_answer,
+                user_id="demo",
+                user_identifier="demo",
+                thread_name=(query_request.user_query or "New chat")[:80],
+            )
+        return JSONResponse(content=full_response)
+
     rate_limiter = get_rate_limiter()
     allowed, _ = rate_limiter.check_and_record(query_request.session_id)
     if not allowed:
@@ -1176,4 +1281,51 @@ def ingest_tickets(index_name: str = Form(...), file: UploadFile = File(...)):
         return result
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@app.post("/SFRAG/retrieval-image")
+async def retrieval_from_image(
+    index_name: str = Form(...),
+    session_id: str = Form(...),
+    thread_id: str | None = Form(None),
+    prompt: str | None = Form(None),
+    file: UploadFile = File(...),
+):
+    index_name = _validate_index_name(index_name)
+    content_type = (file.content_type or "").lower()
+    file_bytes = await file.read()
+    if content_type not in CHAT_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported image type. Allowed: PNG, JPG, JPEG, WEBP.")
+    if len(file_bytes) > MAX_CHAT_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image exceeds 5 MB limit.")
+
+    extracted = _extract_query_from_image(file_bytes, prompt_hint=prompt)
+    query_text = extracted["retrieval_query"] or (prompt or "").strip()
+    if not query_text:
+        raise HTTPException(status_code=400, detail="Could not determine a usable question from the image.")
+
+    request_scope = {"type": "http", "method": "POST", "headers": []}
+    synthetic_request = Request(request_scope)
+    response = await multi_modal_query(
+        QueryRequest(
+            user_query=query_text,
+            index_name=index_name,
+            session_id=session_id,
+            thread_id=thread_id,
+        ),
+        synthetic_request,
+    )
+
+    if isinstance(response, JSONResponse):
+        payload = json.loads(response.body.decode("utf-8"))
+    else:
+        payload = {"mode": "answer", "response": {"content": ""}, "citation": []}
+
+    payload["image_query"] = {
+        "extracted_text": extracted["extracted_text"],
+        "intent": extracted["intent"],
+        "retrieval_query": query_text,
+        "filename": file.filename,
+    }
+    return JSONResponse(content=payload)
 

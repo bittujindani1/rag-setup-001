@@ -45,6 +45,12 @@ type RetrievalResponse = {
   citation?: Array<{ pdf_url?: string; filename?: string }>
   categories?: CategorySummary[]
   selected_category?: string | null
+  image_query?: {
+    extracted_text?: string
+    intent?: string
+    retrieval_query?: string
+    filename?: string
+  }
 }
 
 type PresignedUploadResponse = {
@@ -179,6 +185,7 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [chatImageFile, setChatImageFile] = useState<File | null>(null)
   const [feedbackUserId, setFeedbackUserId] = useState('')
   const [feedbackText, setFeedbackText] = useState('')
   const [uploadPolicy, setUploadPolicy] = useState<UploadPolicy | null>(null)
@@ -406,27 +413,47 @@ function App() {
 
   async function handleSend(rawQuestion?: string, forcedCategory?: string | null) {
     const finalQuestion = (rawQuestion ?? question).trim()
-    if (!finalQuestion) return
+    if (!finalQuestion && !chatImageFile) return
     try {
       setBusy(true)
-      setLoadingMessage(`Searching ${indexName}...`)
-      const { threadId, sessionId: currentSessionId } = await ensureThread(finalQuestion)
+      setLoadingMessage(chatImageFile ? `Analyzing image in ${indexName}...` : `Searching ${indexName}...`)
+      const seedText = finalQuestion || chatImageFile?.name || 'Image question'
+      const { threadId, sessionId: currentSessionId } = await ensureThread(seedText)
 
-      setMessages((current) => [...current, { role: 'user', content: finalQuestion, timestamp: nowIso() }])
+      const userBubbleContent = chatImageFile
+        ? `${finalQuestion ? `${finalQuestion}\n\n` : ''}[Image attached: ${chatImageFile.name}]`
+        : finalQuestion
+      setMessages((current) => [...current, { role: 'user', content: userBubbleContent, timestamp: nowIso() }])
       setQuestion('')
-      const payload = await apiFetch<RetrievalResponse>('/SFRAG/retrieval', {
-        method: 'POST',
-        body: JSON.stringify({
-          user_query: finalQuestion,
-          index_name: indexName,
-          session_id: currentSessionId,
-          thread_id: threadId,
-          selected_category: forcedCategory ?? selectedCategory,
-        }),
-      })
+      let payload: RetrievalResponse
+      if (chatImageFile) {
+        const form = new FormData()
+        form.append('index_name', indexName)
+        form.append('session_id', currentSessionId)
+        form.append('thread_id', threadId)
+        if (finalQuestion) {
+          form.append('prompt', finalQuestion)
+        }
+        form.append('file', chatImageFile)
+        payload = await apiFetch<RetrievalResponse>('/SFRAG/retrieval-image', {
+          method: 'POST',
+          body: form,
+        })
+      } else {
+        payload = await apiFetch<RetrievalResponse>('/SFRAG/retrieval', {
+          method: 'POST',
+          body: JSON.stringify({
+            user_query: finalQuestion,
+            index_name: indexName,
+            session_id: currentSessionId,
+            thread_id: threadId,
+            selected_category: forcedCategory ?? selectedCategory,
+          }),
+        })
+      }
 
       if (payload.mode === 'clarify') {
-        setPendingQuestion(finalQuestion)
+        setPendingQuestion(payload.image_query?.retrieval_query ?? finalQuestion)
         setMessages((current) => [
           ...current,
           { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
@@ -440,9 +467,13 @@ function App() {
           ...current,
           { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
         ])
+        if (payload.image_query?.retrieval_query && chatImageFile) {
+          pushToast(`Image routed as: ${payload.image_query.retrieval_query}`, 'info')
+        }
         pushToast('Answer ready.', 'success')
       }
 
+      setChatImageFile(null)
       await refreshThreads(indexName)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Request failed.'
@@ -920,17 +951,39 @@ function App() {
                 void handleSend()
               }}
             >
-              <textarea
-                value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-                placeholder={
-                  isSnowWorkspace
-                    ? 'Ask about repeat incidents, priorities, root causes, or ask to show ServiceNow tickets in table format...'
-                    : 'Ask about coverage, claims, policy details, or similar support tickets...'
-                }
-              />
-              <button type="submit" disabled={busy || !question.trim()}>
-                {busy ? 'Thinking...' : 'Send'}
+              <div className="composer-main">
+                <textarea
+                  value={question}
+                  onChange={(event) => setQuestion(event.target.value)}
+                  placeholder={
+                    isSnowWorkspace
+                      ? 'Ask about repeat incidents, priorities, root causes, or ask to show ServiceNow tickets in table format...'
+                      : 'Ask about coverage, claims, policy details, or similar support tickets...'
+                  }
+                />
+                <div className="composer-toolbar">
+                  <label className="image-attach-button">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      onChange={(event) => setChatImageFile(event.target.files?.[0] ?? null)}
+                    />
+                    Add image
+                  </label>
+                  {chatImageFile ? (
+                    <div className="attachment-pill">
+                      <span>{chatImageFile.name}</span>
+                      <button type="button" className="attachment-clear" onClick={() => setChatImageFile(null)}>
+                        x
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="composer-hint">Attach a screenshot to extract and answer the question from it.</span>
+                  )}
+                </div>
+              </div>
+              <button type="submit" disabled={busy || (!question.trim() && !chatImageFile)}>
+                {busy ? 'Thinking...' : chatImageFile ? 'Ask from image' : 'Send'}
               </button>
             </form>
           </div>
