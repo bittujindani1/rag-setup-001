@@ -113,6 +113,10 @@ button {
   padding: 18px;
 }
 
+.side-card {
+  padding: 14px;
+}
+
 .grow {
   flex: 1;
   min-height: 220px;
@@ -405,14 +409,15 @@ button {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.92fr);
+  grid-template-columns: minmax(0, 1.75fr) minmax(260px, 0.68fr);
   gap: 18px;
   min-height: 66vh;
 }
 
 .side-stack {
   display: grid;
-  gap: 18px;
+  gap: 14px;
+  align-content: start;
 }
 
 .chat-card {
@@ -577,8 +582,8 @@ button {
 }
 
 .document-item {
-  padding: 14px;
-  border-radius: 18px;
+  padding: 12px;
+  border-radius: 16px;
   border: 1px solid var(--line);
   background: var(--paper-strong);
 }
@@ -593,18 +598,23 @@ button {
 .document-item p,
 .document-item small {
   display: block;
-  margin-top: 8px;
+  margin-top: 6px;
   color: var(--muted);
 }
 
 .feedback-form {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .feedback-form textarea {
-  min-height: 120px;
+  min-height: 84px;
   resize: vertical;
+}
+
+.document-list {
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 .badge {
