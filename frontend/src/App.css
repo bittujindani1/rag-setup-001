@@ -866,15 +866,15 @@ button {
   display: flex;
   justify-content: space-between;
   gap: 14px;
-  align-items: flex-start;
-  padding-top: 12px;
-  padding-bottom: 12px;
+  align-items: center;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .analytics-upload {
   display: grid;
   gap: 6px;
-  min-width: min(340px, 100%);
+  min-width: min(300px, 100%);
 }
 
 .analytics-upload input,
@@ -939,6 +939,11 @@ button {
 .analytics-visual-card h3,
 .analytics-side-card h3 {
   font-size: 1rem;
+}
+
+.analytics-header .helper-text {
+  margin: 3px 0 0;
+  font-size: 0.84rem;
 }
 
 .analytics-query-suggestions {
@@ -1102,9 +1107,11 @@ button {
 }
 
 .analytics-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  display: flex;
   gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
 }
 
 .analytics-kpi-card {
@@ -1112,6 +1119,8 @@ button {
   gap: 6px;
   align-content: start;
   min-height: 94px;
+  min-width: 150px;
+  flex: 0 0 150px;
 }
 
 .analytics-kpi-card span {
@@ -1214,11 +1223,11 @@ button {
 }
 
 .analytics-chart-frame {
-  min-height: 220px;
+  min-height: 200px;
 }
 
 .analytics-number-card {
-  min-height: 220px;
+  min-height: 200px;
   display: grid;
   place-items: center;
   text-align: center;
@@ -1299,6 +1308,43 @@ button {
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
+}
+
+.analytics-history-card {
+  margin-top: 2px;
+}
+
+.analytics-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.analytics-history-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--paper-strong);
+  color: var(--ink);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.analytics-history-item strong {
+  font-size: 0.9rem;
+}
+
+.analytics-history-item span,
+.analytics-history-item small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.analytics-history-item:hover {
+  border-color: rgba(15, 118, 110, 0.24);
+  background: rgba(15, 118, 110, 0.05);
 }
 
 .chart-toggle {

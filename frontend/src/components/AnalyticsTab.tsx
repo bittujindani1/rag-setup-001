@@ -67,9 +67,16 @@ type AnalyticsSidebarState = {
   selectedDatasetMeta: AnalyticsDataset | null
 }
 
+type AnalyticsHistoryEntry = {
+  datasetId: string
+  question: string
+  timestamp: number
+}
+
 const CHART_COLORS = ['#0f766e', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6']
 const CHART_OPTIONS = ['number', 'bar', 'pie', 'line', 'table'] as const
 type ChartOption = (typeof CHART_OPTIONS)[number]
+const ANALYTICS_HISTORY_KEY = 'rag-analytics-history'
 
 async function apiFetch<T>(apiBaseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
@@ -226,7 +233,7 @@ function AnalyticsChart({
 
   if (chartType === 'line') {
     return (
-      <ResponsiveContainer width="100%" height={260}>
+      <ResponsiveContainer width="100%" height={220}>
         <LineChart data={normalizedRows}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="label" />
@@ -240,7 +247,7 @@ function AnalyticsChart({
 
   if (chartType === 'pie') {
     return (
-      <ResponsiveContainer width="100%" height={260}>
+      <ResponsiveContainer width="100%" height={220}>
         <PieChart>
           <Pie data={normalizedRows} dataKey="value" nameKey="label" outerRadius={90} innerRadius={42}>
             {normalizedRows.map((entry, index) => (
@@ -255,7 +262,7 @@ function AnalyticsChart({
   }
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={220}>
       <BarChart data={normalizedRows}>
         <CartesianGrid strokeDasharray="3 3" />
         <XAxis dataKey="label" />
@@ -279,6 +286,8 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
   const [analyticsAnswer, setAnalyticsAnswer] = useState<AnalyticsQueryResponse | null>(null)
   const [metricChartOverrides, setMetricChartOverrides] = useState<Record<string, ChartOption>>({})
   const [answerChartOverride, setAnswerChartOverride] = useState<ChartOption | null>(null)
+  const [showSql, setShowSql] = useState(false)
+  const [recentQueries, setRecentQueries] = useState<AnalyticsHistoryEntry[]>([])
   const [busy, setBusy] = useState(false)
   const [showUploadWarning, setShowUploadWarning] = useState(false)
   const [uploadStatusMessage, setUploadStatusMessage] = useState('')
@@ -327,6 +336,14 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
 
   useEffect(() => {
     void loadDatasets()
+    try {
+      const raw = localStorage.getItem(ANALYTICS_HISTORY_KEY)
+      if (raw) {
+        setRecentQueries(JSON.parse(raw) as AnalyticsHistoryEntry[])
+      }
+    } catch {
+      setRecentQueries([])
+    }
   }, [])
 
   useEffect(() => {
@@ -391,6 +408,7 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       await hydrateDashboard(response.dataset_id)
       setAnalyticsQuestion('')
       setAnalyticsAnswer(null)
+      setShowSql(false)
       setUploadStage('complete')
       setUploadStatusMessage(`Analytics dataset ${response.dataset_id} is ready with ${response.row_count} rows.`)
     } catch (error) {
@@ -421,6 +439,7 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
           setMetrics([])
           setMetricResults({})
           setAnalyticsAnswer(null)
+          setShowSql(false)
         }
       }
       pushToast(`Deleted ${response.dataset_id} and removed ${response.deleted_objects} analytics objects.`, 'success')
@@ -476,6 +495,17 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       })
       setAnalyticsAnswer(response)
       setAnswerChartOverride(null)
+      setShowSql(false)
+      const entry: AnalyticsHistoryEntry = {
+        datasetId: selectedDataset,
+        question: analyticsQuestion.trim(),
+        timestamp: Date.now(),
+      }
+      setRecentQueries((current) => {
+        const next = [entry, ...current.filter((item) => !(item.datasetId === entry.datasetId && item.question === entry.question))].slice(0, 5)
+        localStorage.setItem(ANALYTICS_HISTORY_KEY, JSON.stringify(next))
+        return next
+      })
       pushToast('Analytics query executed.', 'success')
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Analytics query failed.', 'error')
@@ -642,6 +672,9 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
                     <span className="analytics-source-pill subtle">{analyticsAnswer.route}</span>
                   </div>
                   <div className="analytics-result-actions">
+                    <button type="button" className="ghost-button" onClick={() => setShowSql((current) => !current)}>
+                      {showSql ? 'Hide SQL' : 'Show SQL'}
+                    </button>
                     <button type="button" className="ghost-button" onClick={() => exportRowsAsCsv()}>
                       Export CSV
                     </button>
@@ -665,10 +698,12 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
                     rows={analyticsAnswer.result.rows}
                   />
                 </div>
-                <div className="analytics-sql">
-                  <span>Executed SQL</span>
-                  <pre>{analyticsAnswer.sql}</pre>
-                </div>
+                {showSql ? (
+                  <div className="analytics-sql">
+                    <span>Executed SQL</span>
+                    <pre>{analyticsAnswer.sql}</pre>
+                  </div>
+                ) : null}
                 <div className="analytics-table-wrap">
                   <table>
                     <thead>
@@ -716,6 +751,33 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
                 ) : null}
               </div>
             ) : null}
+          </section>
+
+          <section className="analytics-query-card analytics-history-card">
+            <div className="panel-head tight">
+              <div>
+                <h3>Recent analytics</h3>
+                <p className="helper-text">Top 5 recent analytics questions from this browser.</p>
+              </div>
+            </div>
+            <div className="analytics-history-list">
+              {recentQueries.length === 0 ? <p className="analytics-empty">Recent analytics questions will appear here.</p> : null}
+              {recentQueries.map((entry, index) => (
+                <button
+                  key={`${entry.datasetId}-${entry.question}-${index}`}
+                  type="button"
+                  className="analytics-history-item"
+                  onClick={() => {
+                    setSelectedDataset(entry.datasetId)
+                    setAnalyticsQuestion(entry.question)
+                  }}
+                >
+                  <strong>{entry.question}</strong>
+                  <span>{entry.datasetId}</span>
+                  <small>{new Date(entry.timestamp).toLocaleString()}</small>
+                </button>
+              ))}
+            </div>
           </section>
         </div>
       </div>
