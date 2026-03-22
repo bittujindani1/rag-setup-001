@@ -269,6 +269,8 @@ function AnalyticsChart({
 export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
   const [datasets, setDatasets] = useState<AnalyticsDataset[]>([])
   const [selectedDataset, setSelectedDataset] = useState<string>('')
+  const [datasetFilter, setDatasetFilter] = useState('')
+  const [openDatasetMenu, setOpenDatasetMenu] = useState<string | null>(null)
   const [datasetDraft, setDatasetDraft] = useState('analytics_demo')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [summary, setSummary] = useState<Record<string, unknown>>({})
@@ -286,6 +288,16 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     () => datasets.find((dataset) => dataset.dataset_id === selectedDataset) ?? null,
     [datasets, selectedDataset],
   )
+  const filteredDatasets = useMemo(() => {
+    const term = datasetFilter.trim().toLowerCase()
+    if (!term) return datasets
+    return datasets.filter((dataset) =>
+      [dataset.dataset_id, dataset.source_name ?? '', ...(dataset.schema_columns ?? [])]
+        .join(' ')
+        .toLowerCase()
+        .includes(term),
+    )
+  }, [datasetFilter, datasets])
 
   async function loadDatasets(selectDataset?: string) {
     const response = await apiFetch<{ datasets: AnalyticsDataset[] }>(apiBaseUrl, '/SFRAG/analytics/datasets')
@@ -369,6 +381,65 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     }
   }
 
+  async function handleDeleteDataset(datasetId: string) {
+    const confirmed = window.confirm(`Delete analytics dataset "${datasetId}"? This removes its uploaded files, metrics, and Athena table.`)
+    if (!confirmed) return
+    try {
+      setBusy(true)
+      setOpenDatasetMenu(null)
+      const response = await apiFetch<{
+        status: string
+        dataset_id: string
+        deleted_objects: number
+      }>(apiBaseUrl, `/SFRAG/analytics/datasets/${datasetId}`, {
+        method: 'DELETE',
+      })
+      const remaining = await loadDatasets()
+      const nextDataset = remaining.find((dataset) => dataset.dataset_id !== datasetId)?.dataset_id ?? ''
+      if (selectedDataset === datasetId) {
+        setSelectedDataset(nextDataset)
+        if (!nextDataset) {
+          setSummary({})
+          setMetrics([])
+          setMetricResults({})
+          setAnalyticsAnswer(null)
+        }
+      }
+      pushToast(`Deleted ${response.dataset_id} and removed ${response.deleted_objects} analytics objects.`, 'success')
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Dataset deletion failed.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function exportRowsAsCsv() {
+    if (!analyticsAnswer?.result.columns?.length) return
+    const columns = analyticsAnswer.result.columns
+    const escape = (value: string | number | null | undefined) => {
+      const text = value === null || value === undefined ? '' : String(value)
+      if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+        return `"${text.replace(/"/g, '""')}"`
+      }
+      return text
+    }
+    const lines = [
+      columns.join(','),
+      ...analyticsAnswer.result.rows.map((row) => columns.map((column) => escape(row[column] as string | number | null | undefined)).join(',')),
+    ]
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const slug = (analyticsQuestion.trim() || 'analytics_result').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+    link.href = url
+    link.download = `${selectedDataset || 'dataset'}_${slug || 'result'}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    pushToast('Query result exported as CSV.', 'success')
+  }
+
   function handleUploadIntent() {
     if (!uploadFile || !datasetDraft.trim()) return
     setShowUploadWarning(true)
@@ -437,23 +508,62 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
 
       <div className="analytics-layout">
         <aside className="analytics-sidebar">
-          <div className="side-card analytics-side-card">
+            <div className="side-card analytics-side-card">
             <div className="panel-head tight">
               <h3>Datasets</h3>
             </div>
+            <div className="analytics-dataset-tools">
+              <input
+                value={datasetFilter}
+                onChange={(event) => setDatasetFilter(event.target.value)}
+                placeholder="Search datasets"
+                aria-label="Search analytics datasets"
+              />
+            </div>
             <div className="analytics-dataset-list">
               {datasets.length === 0 ? <p className="analytics-empty">Upload a structured dataset to start analytics.</p> : null}
-              {datasets.map((dataset) => (
-                <button
+              {datasets.length > 0 && filteredDatasets.length === 0 ? <p className="analytics-empty">No datasets match this search.</p> : null}
+              {filteredDatasets.map((dataset) => (
+                <div
                   key={dataset.dataset_id}
-                  type="button"
                   className={`analytics-dataset-item ${selectedDataset === dataset.dataset_id ? 'active' : ''}`}
-                  onClick={() => setSelectedDataset(dataset.dataset_id)}
                 >
-                  <strong>{dataset.dataset_id}</strong>
-                  <span>{dataset.source_name ?? 'Structured dataset'}</span>
-                  <small>{formatRelativeTime(dataset.updated_at)}</small>
-                </button>
+                  <div className="analytics-dataset-row">
+                    <button
+                      type="button"
+                      className="analytics-dataset-select"
+                      onClick={() => {
+                        setSelectedDataset(dataset.dataset_id)
+                        setOpenDatasetMenu(null)
+                      }}
+                    >
+                      <strong>{dataset.dataset_id}</strong>
+                      <span>{dataset.source_name ?? 'Structured dataset'}</span>
+                      <small>{formatRelativeTime(dataset.updated_at)}</small>
+                    </button>
+                    <div className="analytics-dataset-menu-wrap">
+                      <button
+                        type="button"
+                        className="menu-button analytics-menu-button"
+                        aria-label={`Open actions for ${dataset.dataset_id}`}
+                        onClick={() => setOpenDatasetMenu((current) => (current === dataset.dataset_id ? null : dataset.dataset_id))}
+                      >
+                        &#8942;
+                      </button>
+                      {openDatasetMenu === dataset.dataset_id ? (
+                        <div className="thread-menu analytics-dataset-menu">
+                          <button
+                            type="button"
+                            className="thread-menu-item delete"
+                            onClick={() => void handleDeleteDataset(dataset.dataset_id)}
+                          >
+                            Delete dataset
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
               ))}
             </div>
             {selectedDatasetMeta ? (
@@ -578,19 +688,26 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
                   </div>
                 ) : null}
                 <div className="analytics-result-topline">
-                  <span className="analytics-source-pill">{analyticsAnswer.source}</span>
-                  <span className="analytics-source-pill subtle">{analyticsAnswer.route}</span>
-                  <div className="chart-toggle">
-                    {availableChartOptions(analyticsAnswer.result.rows, analyticsAnswer.chart_type).map((option) => (
-                      <button
-                        key={`answer-${option}`}
-                        type="button"
-                        className={(answerChartOverride ?? inferChartType(analyticsAnswer.chart_type, analyticsAnswer.result.rows)) === option ? 'active' : ''}
-                        onClick={() => setAnswerChartOverride(option)}
-                      >
-                        {option}
-                      </button>
-                    ))}
+                  <div className="analytics-result-badges">
+                    <span className="analytics-source-pill">{analyticsAnswer.source}</span>
+                    <span className="analytics-source-pill subtle">{analyticsAnswer.route}</span>
+                  </div>
+                  <div className="analytics-result-actions">
+                    <button type="button" className="ghost-button" onClick={() => exportRowsAsCsv()}>
+                      Export CSV
+                    </button>
+                    <div className="chart-toggle">
+                      {availableChartOptions(analyticsAnswer.result.rows, analyticsAnswer.chart_type).map((option) => (
+                        <button
+                          key={`answer-${option}`}
+                          type="button"
+                          className={(answerChartOverride ?? inferChartType(analyticsAnswer.chart_type, analyticsAnswer.result.rows)) === option ? 'active' : ''}
+                          onClick={() => setAnswerChartOverride(option)}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 <div className="analytics-chart-frame">

@@ -213,6 +213,23 @@ class AnalyticsStore:
             datasets.append(manifest)
         return sorted(datasets, key=lambda item: item.get("updated_at", 0), reverse=True)
 
+    def delete_dataset(self, dataset_id: str) -> dict[str, Any]:
+        safe_dataset_id = _safe_dataset_id(dataset_id)
+        deleted_objects = self._delete_prefix(f"datasets/{safe_dataset_id}/")
+        table_name = self.get_table_name(safe_dataset_id)
+        table_deleted = False
+        try:
+            self.glue.delete_table(DatabaseName=self.glue_database, Name=table_name)
+            table_deleted = True
+        except self.glue.exceptions.EntityNotFoundException:
+            table_deleted = False
+        return {
+            "dataset_id": safe_dataset_id,
+            "deleted_objects": deleted_objects,
+            "glue_table_deleted": table_deleted,
+            "table_name": table_name,
+        }
+
     def get_schema(self, dataset_id: str) -> dict[str, Any] | None:
         return self._load_json(f"datasets/{dataset_id}/schema.json")
 
@@ -315,6 +332,19 @@ class AnalyticsStore:
         for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix, Delimiter="/"):
             prefixes.extend(item["Prefix"] for item in page.get("CommonPrefixes", []))
         return prefixes
+
+    def _delete_prefix(self, prefix: str) -> int:
+        paginator = self.s3.get_paginator("list_objects_v2")
+        deleted = 0
+        for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+            objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+            if not objects:
+                continue
+            for start in range(0, len(objects), 1000):
+                batch = objects[start : start + 1000]
+                self.s3.delete_objects(Bucket=self.bucket_name, Delete={"Objects": batch})
+                deleted += len(batch)
+        return deleted
 
     @staticmethod
     def _normalize_value(value: Any) -> Any:

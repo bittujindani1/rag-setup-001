@@ -876,6 +876,7 @@ button {
 }
 
 .analytics-upload input,
+.analytics-dataset-tools input,
 .analytics-query-box textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -979,21 +980,57 @@ button {
   gap: 10px;
 }
 
+.analytics-dataset-tools {
+  margin-bottom: 12px;
+}
+
 .analytics-dataset-item {
-  text-align: left;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: var(--paper-strong);
   color: var(--ink);
   padding: 12px;
-  display: grid;
-  gap: 4px;
-  cursor: pointer;
 }
 
 .analytics-dataset-item.active {
   border-color: rgba(15, 118, 110, 0.28);
   background: var(--accent-mist);
+}
+
+.analytics-dataset-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.analytics-dataset-select {
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.analytics-dataset-menu-wrap {
+  position: relative;
+}
+
+.analytics-menu-button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+}
+
+.analytics-dataset-menu {
+  top: 44px;
+  right: 0;
 }
 
 .analytics-dataset-meta {
@@ -1103,6 +1140,14 @@ button {
   gap: 10px;
   align-items: center;
   justify-content: space-between;
+}
+
+.analytics-result-badges,
+.analytics-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
 }
 
 .analytics-source-pill {

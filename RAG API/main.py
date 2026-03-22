@@ -1427,6 +1427,16 @@ async def list_analytics_datasets():
     return {"datasets": get_analytics_store().list_datasets()}
 
 
+@app.delete("/SFRAG/analytics/datasets/{dataset_id}")
+async def delete_analytics_dataset(dataset_id: str):
+    normalized = _validate_index_name(dataset_id)
+    analytics_store = get_analytics_store()
+    if not analytics_store.get_schema(normalized):
+        raise HTTPException(status_code=404, detail="Analytics dataset not found")
+    deletion = analytics_store.delete_dataset(normalized)
+    return {"status": "deleted", **deletion}
+
+
 @app.get("/SFRAG/analytics/schema/{dataset_id}")
 async def get_analytics_schema(dataset_id: str):
     normalized = _validate_index_name(dataset_id)
