@@ -16,6 +16,8 @@ provider "aws" {
   skip_requesting_account_id  = true
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
   prefix           = var.project_name
   lambda_image_uri = var.lambda_image_uri != "" ? var.lambda_image_uri : "${aws_ecr_repository.rag_api.repository_url}:${var.lambda_image_tag}"
@@ -124,7 +126,8 @@ resource "aws_s3_bucket" "analytics" {
 }
 
 resource "aws_glue_catalog_database" "analytics" {
-  name = local.analytics_glue_database
+  name       = local.analytics_glue_database
+  catalog_id = data.aws_caller_identity.current.account_id
 }
 
 resource "aws_dynamodb_table" "chat_history" {
@@ -364,9 +367,9 @@ data "aws_iam_policy_document" "rag_lambda_policy" {
     ]
     resources = [
       aws_glue_catalog_database.analytics.arn,
-      "arn:aws:glue:${var.aws_region}:*:catalog",
-      "arn:aws:glue:${var.aws_region}:*:database/${aws_glue_catalog_database.analytics.name}",
-      "arn:aws:glue:${var.aws_region}:*:table/${aws_glue_catalog_database.analytics.name}/*",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/${aws_glue_catalog_database.analytics.name}",
+      "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/${aws_glue_catalog_database.analytics.name}/*",
     ]
   }
 
