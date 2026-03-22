@@ -898,13 +898,20 @@ button {
 
 .analytics-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   gap: 18px;
 }
 
 .analytics-main {
   display: grid;
   gap: 18px;
+}
+
+.analytics-sidebar {
+  display: grid;
+}
+
+.analytics-side-card {
+  width: 100%;
 }
 
 .analytics-hero-strip {
@@ -978,6 +985,7 @@ button {
 .analytics-dataset-list {
   display: grid;
   gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .analytics-dataset-tools {
