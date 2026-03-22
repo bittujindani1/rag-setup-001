@@ -507,6 +507,75 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       ) : null}
 
       <div className="analytics-layout">
+        <aside className="analytics-sidebar">
+          <div className="side-card analytics-side-card">
+            <div className="panel-head tight">
+              <h3>Datasets</h3>
+            </div>
+            <div className="analytics-dataset-tools">
+              <input
+                value={datasetFilter}
+                onChange={(event) => setDatasetFilter(event.target.value)}
+                placeholder="Search datasets"
+                aria-label="Search analytics datasets"
+              />
+            </div>
+            <div className="analytics-dataset-list">
+              {datasets.length === 0 ? <p className="analytics-empty">Upload a structured dataset to start analytics.</p> : null}
+              {datasets.length > 0 && filteredDatasets.length === 0 ? <p className="analytics-empty">No datasets match this search.</p> : null}
+              {filteredDatasets.map((dataset) => (
+                <div
+                  key={dataset.dataset_id}
+                  className={`analytics-dataset-item ${selectedDataset === dataset.dataset_id ? 'active' : ''}`}
+                >
+                  <div className="analytics-dataset-row">
+                    <button
+                      type="button"
+                      className="analytics-dataset-select"
+                      onClick={() => {
+                        setSelectedDataset(dataset.dataset_id)
+                        setOpenDatasetMenu(null)
+                      }}
+                    >
+                      <strong>{dataset.dataset_id}</strong>
+                      <span>{dataset.source_name ?? 'Structured dataset'}</span>
+                      <small>{formatRelativeTime(dataset.updated_at)}</small>
+                    </button>
+                    <div className="analytics-dataset-menu-wrap">
+                      <button
+                        type="button"
+                        className="menu-button analytics-menu-button"
+                        aria-label={`Open actions for ${dataset.dataset_id}`}
+                        onClick={() => setOpenDatasetMenu((current) => (current === dataset.dataset_id ? null : dataset.dataset_id))}
+                      >
+                        &#8942;
+                      </button>
+                      {openDatasetMenu === dataset.dataset_id ? (
+                        <div className="thread-menu analytics-dataset-menu">
+                          <button
+                            type="button"
+                            className="thread-menu-item delete"
+                            onClick={() => void handleDeleteDataset(dataset.dataset_id)}
+                          >
+                            Delete dataset
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {selectedDatasetMeta ? (
+              <div className="analytics-dataset-meta">
+                <h4>Selected dataset</h4>
+                <p>{selectedDatasetMeta.source_name ?? 'Structured upload'}</p>
+                <small>{selectedDatasetMeta.schema_columns?.length ?? 0} columns available for analytics.</small>
+              </div>
+            ) : null}
+          </div>
+        </aside>
+
         <div className="analytics-main">
           <section className="analytics-hero-strip">
             <div>
@@ -700,75 +769,6 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
             ) : null}
           </section>
         </div>
-
-        <aside className="analytics-sidebar">
-          <div className="side-card analytics-side-card">
-            <div className="panel-head tight">
-              <h3>Datasets</h3>
-            </div>
-            <div className="analytics-dataset-tools">
-              <input
-                value={datasetFilter}
-                onChange={(event) => setDatasetFilter(event.target.value)}
-                placeholder="Search datasets"
-                aria-label="Search analytics datasets"
-              />
-            </div>
-            <div className="analytics-dataset-list">
-              {datasets.length === 0 ? <p className="analytics-empty">Upload a structured dataset to start analytics.</p> : null}
-              {datasets.length > 0 && filteredDatasets.length === 0 ? <p className="analytics-empty">No datasets match this search.</p> : null}
-              {filteredDatasets.map((dataset) => (
-                <div
-                  key={dataset.dataset_id}
-                  className={`analytics-dataset-item ${selectedDataset === dataset.dataset_id ? 'active' : ''}`}
-                >
-                  <div className="analytics-dataset-row">
-                    <button
-                      type="button"
-                      className="analytics-dataset-select"
-                      onClick={() => {
-                        setSelectedDataset(dataset.dataset_id)
-                        setOpenDatasetMenu(null)
-                      }}
-                    >
-                      <strong>{dataset.dataset_id}</strong>
-                      <span>{dataset.source_name ?? 'Structured dataset'}</span>
-                      <small>{formatRelativeTime(dataset.updated_at)}</small>
-                    </button>
-                    <div className="analytics-dataset-menu-wrap">
-                      <button
-                        type="button"
-                        className="menu-button analytics-menu-button"
-                        aria-label={`Open actions for ${dataset.dataset_id}`}
-                        onClick={() => setOpenDatasetMenu((current) => (current === dataset.dataset_id ? null : dataset.dataset_id))}
-                      >
-                        &#8942;
-                      </button>
-                      {openDatasetMenu === dataset.dataset_id ? (
-                        <div className="thread-menu analytics-dataset-menu">
-                          <button
-                            type="button"
-                            className="thread-menu-item delete"
-                            onClick={() => void handleDeleteDataset(dataset.dataset_id)}
-                          >
-                            Delete dataset
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {selectedDatasetMeta ? (
-              <div className="analytics-dataset-meta">
-                <h4>Selected dataset</h4>
-                <p>{selectedDatasetMeta.source_name ?? 'Structured upload'}</p>
-                <small>{selectedDatasetMeta.schema_columns?.length ?? 0} columns available for analytics.</small>
-              </div>
-            ) : null}
-          </div>
-        </aside>
       </div>
       </section>
 

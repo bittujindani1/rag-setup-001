@@ -898,7 +898,9 @@ button {
 
 .analytics-layout {
   display: grid;
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
   gap: 18px;
+  align-items: start;
 }
 
 .analytics-main {
@@ -908,6 +910,8 @@ button {
 
 .analytics-sidebar {
   display: grid;
+  position: sticky;
+  top: 18px;
 }
 
 .analytics-side-card {
@@ -985,7 +989,9 @@ button {
 .analytics-dataset-list {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  max-height: 540px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .analytics-dataset-tools {
