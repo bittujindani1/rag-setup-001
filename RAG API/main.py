@@ -101,8 +101,8 @@ THREAD_TABLE_NAME = os.getenv("DYNAMODB_THREAD_TABLE", "rag_chat_threads")
 thread_store = DynamoDBThreadStore(table_name=THREAD_TABLE_NAME, region_name=os.getenv("AWS_REGION", "ap-south-1"))
 TEMP_ROOT = Path(tempfile.gettempdir()) / "rag_serverless"
 BASIC_AUTH_USERS = {
-    "HTC_admin": {"password": "admin123", "role": "admin"},
-    "HTC_user": {"password": "user123", "role": "user"},
+    "htc_admin": {"password": "admin123", "role": "admin"},
+    "htc_user": {"password": "user123", "role": "user"},
 }
 PUBLIC_PATHS = {
     "/health",
@@ -136,10 +136,11 @@ def _authenticate_request(request: Request) -> tuple[str, str] | None:
         username, password = decoded.split(":", 1)
     except Exception:
         return None
-    record = BASIC_AUTH_USERS.get(username)
+    normalized_username = username.strip().lower()
+    record = BASIC_AUTH_USERS.get(normalized_username)
     if not record or record.get("password") != password:
         return None
-    return username, str(record.get("role", "user"))
+    return normalized_username, str(record.get("role", "user"))
 
 
 @app.middleware("http")
@@ -921,11 +922,12 @@ async def metrics():
 
 @app.post("/SFRAG/auth/login")
 async def basic_login(request: BasicLoginRequest):
-    record = BASIC_AUTH_USERS.get((request.username or "").strip())
+    normalized_username = (request.username or "").strip().lower()
+    record = BASIC_AUTH_USERS.get(normalized_username)
     if not record or record.get("password") != (request.password or ""):
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     return {
-        "username": request.username.strip(),
+        "username": normalized_username,
         "role": str(record.get("role", "user")),
     }
 
