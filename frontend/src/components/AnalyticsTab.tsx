@@ -61,6 +61,12 @@ type AnalyticsTabProps = {
   pushToast: (message: string, tone: 'info' | 'success' | 'error') => void
 }
 
+type AnalyticsSidebarState = {
+  datasets: AnalyticsDataset[]
+  selectedDataset: string
+  selectedDatasetMeta: AnalyticsDataset | null
+}
+
 const CHART_COLORS = ['#0f766e', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6']
 const CHART_OPTIONS = ['number', 'bar', 'pie', 'line', 'table'] as const
 type ChartOption = (typeof CHART_OPTIONS)[number]
@@ -75,11 +81,6 @@ async function apiFetch<T>(apiBaseUrl: string, path: string, init?: RequestInit)
     throw new Error((await response.text()) || `Request failed: ${response.status}`)
   }
   return response.json() as Promise<T>
-}
-
-function formatRelativeTime(value?: number): string {
-  if (!value) return 'Unknown'
-  return new Date(value * 1000).toLocaleString()
 }
 
 function formatMetricLabel(value: string): string {
@@ -269,8 +270,6 @@ function AnalyticsChart({
 export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
   const [datasets, setDatasets] = useState<AnalyticsDataset[]>([])
   const [selectedDataset, setSelectedDataset] = useState<string>('')
-  const [datasetFilter, setDatasetFilter] = useState('')
-  const [openDatasetMenu, setOpenDatasetMenu] = useState<string | null>(null)
   const [datasetDraft, setDatasetDraft] = useState('analytics_demo')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [summary, setSummary] = useState<Record<string, unknown>>({})
@@ -288,16 +287,6 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     () => datasets.find((dataset) => dataset.dataset_id === selectedDataset) ?? null,
     [datasets, selectedDataset],
   )
-  const filteredDatasets = useMemo(() => {
-    const term = datasetFilter.trim().toLowerCase()
-    if (!term) return datasets
-    return datasets.filter((dataset) =>
-      [dataset.dataset_id, dataset.source_name ?? '', ...(dataset.schema_columns ?? [])]
-        .join(' ')
-        .toLowerCase()
-        .includes(term),
-    )
-  }, [datasetFilter, datasets])
 
   async function loadDatasets(selectDataset?: string) {
     const response = await apiFetch<{ datasets: AnalyticsDataset[] }>(apiBaseUrl, '/SFRAG/analytics/datasets')
@@ -346,6 +335,38 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     }
   }, [selectedDataset])
 
+  useEffect(() => {
+    const payload: AnalyticsSidebarState = {
+      datasets,
+      selectedDataset,
+      selectedDatasetMeta,
+    }
+    window.dispatchEvent(new CustomEvent<AnalyticsSidebarState>('analytics-sidebar-state', { detail: payload }))
+  }, [datasets, selectedDataset, selectedDatasetMeta])
+
+  useEffect(() => {
+    const handleSelect = (event: Event) => {
+      const customEvent = event as CustomEvent<{ datasetId?: string }>
+      const nextDataset = customEvent.detail?.datasetId ?? ''
+      if (nextDataset) {
+        setSelectedDataset(nextDataset)
+      }
+    }
+    const handleDelete = (event: Event) => {
+      const customEvent = event as CustomEvent<{ datasetId?: string }>
+      const nextDataset = customEvent.detail?.datasetId ?? ''
+      if (nextDataset) {
+        void handleDeleteDataset(nextDataset)
+      }
+    }
+    window.addEventListener('analytics-sidebar-select', handleSelect as EventListener)
+    window.addEventListener('analytics-sidebar-delete', handleDelete as EventListener)
+    return () => {
+      window.removeEventListener('analytics-sidebar-select', handleSelect as EventListener)
+      window.removeEventListener('analytics-sidebar-delete', handleDelete as EventListener)
+    }
+  }, [])
+
   async function performUpload() {
     if (!uploadFile || !datasetDraft.trim()) return
     try {
@@ -382,11 +403,8 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
   }
 
   async function handleDeleteDataset(datasetId: string) {
-    const confirmed = window.confirm(`Delete analytics dataset "${datasetId}"? This removes its uploaded files, metrics, and Athena table.`)
-    if (!confirmed) return
     try {
       setBusy(true)
-      setOpenDatasetMenu(null)
       const response = await apiFetch<{
         status: string
         dataset_id: string
@@ -506,76 +524,7 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
         </section>
       ) : null}
 
-      <div className="analytics-layout">
-        <aside className="analytics-sidebar">
-          <div className="side-card analytics-side-card">
-            <div className="panel-head tight">
-              <h3>Datasets</h3>
-            </div>
-            <div className="analytics-dataset-tools">
-              <input
-                value={datasetFilter}
-                onChange={(event) => setDatasetFilter(event.target.value)}
-                placeholder="Search datasets"
-                aria-label="Search analytics datasets"
-              />
-            </div>
-            <div className="analytics-dataset-list">
-              {datasets.length === 0 ? <p className="analytics-empty">Upload a structured dataset to start analytics.</p> : null}
-              {datasets.length > 0 && filteredDatasets.length === 0 ? <p className="analytics-empty">No datasets match this search.</p> : null}
-              {filteredDatasets.map((dataset) => (
-                <div
-                  key={dataset.dataset_id}
-                  className={`analytics-dataset-item ${selectedDataset === dataset.dataset_id ? 'active' : ''}`}
-                >
-                  <div className="analytics-dataset-row">
-                    <button
-                      type="button"
-                      className="analytics-dataset-select"
-                      onClick={() => {
-                        setSelectedDataset(dataset.dataset_id)
-                        setOpenDatasetMenu(null)
-                      }}
-                    >
-                      <strong>{dataset.dataset_id}</strong>
-                      <span>{dataset.source_name ?? 'Structured dataset'}</span>
-                      <small>{formatRelativeTime(dataset.updated_at)}</small>
-                    </button>
-                    <div className="analytics-dataset-menu-wrap">
-                      <button
-                        type="button"
-                        className="menu-button analytics-menu-button"
-                        aria-label={`Open actions for ${dataset.dataset_id}`}
-                        onClick={() => setOpenDatasetMenu((current) => (current === dataset.dataset_id ? null : dataset.dataset_id))}
-                      >
-                        &#8942;
-                      </button>
-                      {openDatasetMenu === dataset.dataset_id ? (
-                        <div className="thread-menu analytics-dataset-menu">
-                          <button
-                            type="button"
-                            className="thread-menu-item delete"
-                            onClick={() => void handleDeleteDataset(dataset.dataset_id)}
-                          >
-                            Delete dataset
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {selectedDatasetMeta ? (
-              <div className="analytics-dataset-meta">
-                <h4>Selected dataset</h4>
-                <p>{selectedDatasetMeta.source_name ?? 'Structured upload'}</p>
-                <small>{selectedDatasetMeta.schema_columns?.length ?? 0} columns available for analytics.</small>
-              </div>
-            ) : null}
-          </div>
-        </aside>
-
+      <div className="analytics-layout analytics-layout-solo">
         <div className="analytics-main">
           <section className="analytics-hero-strip">
             <div>

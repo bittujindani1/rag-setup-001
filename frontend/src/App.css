@@ -903,6 +903,10 @@ button {
   align-items: start;
 }
 
+.analytics-layout.analytics-layout-solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .analytics-main {
   display: grid;
   gap: 18px;
@@ -1053,6 +1057,10 @@ button {
   border-top: 1px solid var(--line);
   display: grid;
   gap: 6px;
+}
+
+.sidebar-analytics-meta {
+  margin-top: 16px;
 }
 
 .analytics-dataset-meta h4 {

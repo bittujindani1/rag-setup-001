@@ -97,6 +97,14 @@ type Toast = {
   message: string
 }
 
+type AnalyticsDatasetSidebarRecord = {
+  dataset_id: string
+  source_name?: string
+  table_name?: string
+  updated_at?: number
+  schema_columns?: string[]
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
 const DEFAULT_INDEX = import.meta.env.VITE_INDEX_NAME ?? 'statefarm_rag'
 const SHARED_WORKSPACE = import.meta.env.VITE_SHARED_INDEX_NAME ?? 'demo-shared'
@@ -203,6 +211,12 @@ function App() {
   const [documentsOpen, setDocumentsOpen] = useState(true)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
+  const [analyticsDatasets, setAnalyticsDatasets] = useState<AnalyticsDatasetSidebarRecord[]>([])
+  const [analyticsSelectedDataset, setAnalyticsSelectedDataset] = useState('')
+  const [analyticsSelectedDatasetMeta, setAnalyticsSelectedDatasetMeta] = useState<AnalyticsDatasetSidebarRecord | null>(null)
+  const [analyticsDatasetFilter, setAnalyticsDatasetFilter] = useState('')
+  const [analyticsOpenDatasetMenuId, setAnalyticsOpenDatasetMenuId] = useState<string | null>(null)
+  const [analyticsConfirmDeleteDatasetId, setAnalyticsConfirmDeleteDatasetId] = useState<string | null>(null)
   const chatLogRef = useRef<HTMLDivElement | null>(null)
   const menuContainerRef = useRef<HTMLDivElement | null>(null)
 
@@ -226,6 +240,16 @@ function App() {
     [activeThreadId, sortedThreads],
   )
   const orderedMessages = useMemo(() => [...messages], [messages])
+  const filteredAnalyticsDatasets = useMemo(() => {
+    const term = analyticsDatasetFilter.trim().toLowerCase()
+    if (!term) return analyticsDatasets
+    return analyticsDatasets.filter((dataset) =>
+      [dataset.dataset_id, dataset.source_name ?? '', ...(dataset.schema_columns ?? [])]
+        .join(' ')
+        .toLowerCase()
+        .includes(term),
+    )
+  }, [analyticsDatasetFilter, analyticsDatasets])
   const logoSrc = theme === 'dark' ? '/logo_dark.PNG' : '/logo_light.PNG'
 
   function pushToast(message: string, tone: Toast['tone']) {
@@ -398,6 +422,24 @@ function App() {
   }, [orderedMessages])
 
   useEffect(() => {
+    const handleAnalyticsSidebarState = (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        datasets: AnalyticsDatasetSidebarRecord[]
+        selectedDataset: string
+        selectedDatasetMeta: AnalyticsDatasetSidebarRecord | null
+      }>
+      setAnalyticsDatasets(customEvent.detail?.datasets ?? [])
+      setAnalyticsSelectedDataset(customEvent.detail?.selectedDataset ?? '')
+      setAnalyticsSelectedDatasetMeta(customEvent.detail?.selectedDatasetMeta ?? null)
+    }
+
+    window.addEventListener('analytics-sidebar-state', handleAnalyticsSidebarState as EventListener)
+    return () => {
+      window.removeEventListener('analytics-sidebar-state', handleAnalyticsSidebarState as EventListener)
+    }
+  }, [])
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
@@ -407,6 +449,7 @@ function App() {
       if (!menuContainerRef.current?.contains(event.target as Node)) {
         setOpenMenuThreadId(null)
         setOpenWorkspaceMenuId(null)
+        setAnalyticsOpenDatasetMenuId(null)
       }
     }
     document.addEventListener('mousedown', onDocumentClick)
@@ -850,6 +893,87 @@ function App() {
               </div>
             </div>
           </>
+        ) : null}
+        {appView === 'analytics' ? (
+          <div className="panel grow">
+            <div className="panel-head">
+              <h2>Datasets</h2>
+            </div>
+            <div className="analytics-dataset-tools">
+              <input
+                value={analyticsDatasetFilter}
+                onChange={(event) => setAnalyticsDatasetFilter(event.target.value)}
+                placeholder="Search datasets"
+                aria-label="Search analytics datasets"
+              />
+            </div>
+            <div className="thread-list analytics-sidebar-list">
+              {analyticsDatasets.length === 0 ? <p className="history-empty">Upload a structured dataset to start analytics.</p> : null}
+              {analyticsDatasets.length > 0 && filteredAnalyticsDatasets.length === 0 ? <p className="history-empty">No datasets match this search.</p> : null}
+              {filteredAnalyticsDatasets.map((dataset) => (
+                <div key={dataset.dataset_id} className={`thread-item ${dataset.dataset_id === analyticsSelectedDataset ? 'active' : ''}`}>
+                  <button
+                    className="thread-link"
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent('analytics-sidebar-select', { detail: { datasetId: dataset.dataset_id } }))
+                      setAnalyticsOpenDatasetMenuId(null)
+                    }}
+                  >
+                    <strong>{dataset.dataset_id}</strong>
+                    <span>{dataset.source_name ?? 'Structured dataset'}</span>
+                    <span>{dataset.updated_at ? new Date(dataset.updated_at * 1000).toLocaleString() : 'Unknown'}</span>
+                  </button>
+                  <div className="thread-actions">
+                    <button
+                      className="menu-button kebab-button"
+                      aria-label="Dataset actions"
+                      onClick={() => {
+                        setAnalyticsOpenDatasetMenuId((current) => (current === dataset.dataset_id ? null : dataset.dataset_id))
+                        setAnalyticsConfirmDeleteDatasetId(null)
+                      }}
+                    >
+                      <span />
+                      <span />
+                      <span />
+                    </button>
+                    {analyticsOpenDatasetMenuId === dataset.dataset_id ? (
+                      <div className="thread-menu">
+                        {analyticsConfirmDeleteDatasetId === dataset.dataset_id ? (
+                          <>
+                            <p className="thread-menu-copy">Delete this analytics dataset and its uploaded data?</p>
+                            <button
+                              className="thread-menu-item delete"
+                              onClick={() => {
+                                window.dispatchEvent(new CustomEvent('analytics-sidebar-delete', { detail: { datasetId: dataset.dataset_id } }))
+                                setAnalyticsConfirmDeleteDatasetId(null)
+                                setAnalyticsOpenDatasetMenuId(null)
+                              }}
+                            >
+                              Confirm delete
+                            </button>
+                            <button className="thread-menu-item" onClick={() => setAnalyticsConfirmDeleteDatasetId(null)}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button className="thread-menu-item delete" onClick={() => setAnalyticsConfirmDeleteDatasetId(dataset.dataset_id)}>
+                            Delete dataset
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {analyticsSelectedDatasetMeta ? (
+              <div className="analytics-dataset-meta sidebar-analytics-meta">
+                <h4>Selected dataset</h4>
+                <p>{analyticsSelectedDatasetMeta.source_name ?? 'Structured upload'}</p>
+                <small>{analyticsSelectedDatasetMeta.schema_columns?.length ?? 0} columns available for analytics.</small>
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </aside>
 
