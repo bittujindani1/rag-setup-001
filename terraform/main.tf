@@ -329,6 +329,7 @@ data "aws_iam_policy_document" "rag_lambda_policy" {
 
   statement {
     actions = [
+      "s3:GetBucketLocation",
       "s3:GetObject",
       "s3:PutObject",
       "s3:DeleteObject",
