@@ -859,13 +859,13 @@ button {
 .analytics-visual-card,
 .analytics-side-card,
 .analytics-kpi-card {
-  padding: 18px;
+  padding: 14px;
 }
 
 .analytics-header {
   display: flex;
   justify-content: space-between;
-  gap: 18px;
+  gap: 14px;
   align-items: flex-start;
 }
 
@@ -880,10 +880,10 @@ button {
 .analytics-query-box textarea {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--paper-strong);
   color: var(--ink);
-  padding: 12px 14px;
+  padding: 10px 12px;
 }
 
 .analytics-upload button,
@@ -892,7 +892,7 @@ button {
   border-radius: 999px;
   background: var(--accent);
   color: white;
-  padding: 12px 18px;
+  padding: 10px 16px;
   cursor: pointer;
 }
 
@@ -909,7 +909,7 @@ button {
 
 .analytics-main {
   display: grid;
-  gap: 18px;
+  gap: 14px;
 }
 
 .analytics-sidebar {
@@ -924,22 +924,32 @@ button {
 
 .analytics-hero-strip {
   display: grid;
-  gap: 12px;
-  padding: 18px 20px;
-  border-radius: 24px;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 20px;
   background: linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(14, 165, 233, 0.06));
   border: 1px solid rgba(15, 118, 110, 0.12);
+}
+
+.analytics-header h2,
+.analytics-hero-strip h3,
+.analytics-query-card h3,
+.analytics-visual-card h3,
+.analytics-side-card h3 {
+  font-size: 1rem;
 }
 
 .analytics-query-suggestions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .analytics-query-suggestions .chip {
   border: 1px solid rgba(15, 118, 110, 0.14);
   background: rgba(255, 255, 255, 0.72);
+  padding: 8px 12px;
+  font-size: 0.88rem;
 }
 
 .analytics-upload-status {
@@ -992,22 +1002,22 @@ button {
 
 .analytics-dataset-list {
   display: grid;
-  gap: 10px;
-  max-height: 540px;
+  gap: 8px;
+  max-height: 500px;
   overflow-y: auto;
   padding-right: 4px;
 }
 
 .analytics-dataset-tools {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .analytics-dataset-item {
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 14px;
   background: var(--paper-strong);
   color: var(--ink);
-  padding: 12px;
+  padding: 10px;
 }
 
 .analytics-dataset-item.active {
@@ -1018,7 +1028,7 @@ button {
 .analytics-dataset-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 8px;
   align-items: start;
 }
 
@@ -1038,12 +1048,12 @@ button {
 }
 
 .analytics-menu-button {
-  min-width: 40px;
-  min-height: 40px;
+  min-width: 34px;
+  min-height: 34px;
   padding: 0;
   display: grid;
   place-items: center;
-  font-size: 1.1rem;
+  font-size: 0.95rem;
 }
 
 .analytics-dataset-menu {
@@ -1080,50 +1090,59 @@ button {
   color: var(--muted);
 }
 
+.analytics-dataset-item strong {
+  font-size: 0.95rem;
+}
+
+.analytics-dataset-item span,
+.analytics-dataset-item small {
+  font-size: 0.84rem;
+}
+
 .analytics-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 10px;
 }
 
 .analytics-kpi-card {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   align-content: start;
-  min-height: 112px;
+  min-height: 94px;
 }
 
 .analytics-kpi-card span {
   color: var(--muted);
   text-transform: capitalize;
-  font-size: 0.82rem;
+  font-size: 0.76rem;
 }
 
 .analytics-kpi-card strong {
-  font-size: 1.45rem;
-  line-height: 1.25;
+  font-size: 0.98rem;
+  line-height: 1.32;
 }
 
 .analytics-kpi-card small {
   color: var(--muted);
-  font-size: 0.84rem;
+  font-size: 0.74rem;
 }
 
 .analytics-visual-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
 }
 
 .analytics-query-box {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 12px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .analytics-query-box textarea {
-  min-height: 92px;
+  min-height: 76px;
   resize: vertical;
 }
 
@@ -1178,8 +1197,8 @@ button {
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent-strong);
-  padding: 6px 10px;
-  font-size: 0.78rem;
+  padding: 5px 9px;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -1189,22 +1208,22 @@ button {
 }
 
 .analytics-chart-frame {
-  min-height: 260px;
+  min-height: 220px;
 }
 
 .analytics-number-card {
-  min-height: 260px;
+  min-height: 220px;
   display: grid;
   place-items: center;
   text-align: center;
-  gap: 8px;
+  gap: 6px;
   border: 1px dashed var(--line);
-  border-radius: 20px;
+  border-radius: 16px;
   background: linear-gradient(180deg, rgba(15, 118, 110, 0.03), rgba(15, 118, 110, 0.08));
 }
 
 .analytics-number-card strong {
-  font-size: 3rem;
+  font-size: 2.15rem;
   line-height: 1;
 }
 
@@ -1212,7 +1231,7 @@ button {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  font-size: 0.8rem;
+  font-size: 0.72rem;
 }
 
 .analytics-sql {
@@ -1257,9 +1276,10 @@ button {
 
 .analytics-table-wrap th,
 .analytics-table-wrap td {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--line);
   text-align: left;
+  font-size: 0.86rem;
 }
 
 .analytics-table-wrap th {
@@ -1286,8 +1306,8 @@ button {
   background: var(--paper-strong);
   color: var(--muted);
   border-radius: 999px;
-  padding: 7px 10px;
-  font-size: 0.76rem;
+  padding: 6px 9px;
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
