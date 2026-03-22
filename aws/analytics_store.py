@@ -98,7 +98,7 @@ class AnalyticsStore:
         safe_dataset_id = _safe_dataset_id(dataset_id)
         raw_key = f"datasets/{safe_dataset_id}/raw/{source_name}"
         schema_key = f"datasets/{safe_dataset_id}/schema.json"
-        parquet_key = f"datasets/{safe_dataset_id}/parquet/data.parquet"
+        data_key = f"datasets/{safe_dataset_id}/tabular/data.csv"
 
         self.s3.put_object(Bucket=self.bucket_name, Key=raw_key, Body=file_bytes)
         self.s3.put_object(
@@ -107,21 +107,21 @@ class AnalyticsStore:
             Body=json.dumps(schema_profile, indent=2).encode("utf-8"),
             ContentType="application/json",
         )
-        parquet_bytes = self._to_parquet_bytes(rows, safe_dataset_id)
+        csv_bytes = self._to_csv_bytes(rows, safe_dataset_id, schema_profile)
         self.s3.put_object(
             Bucket=self.bucket_name,
-            Key=parquet_key,
-            Body=parquet_bytes,
-            ContentType="application/octet-stream",
+            Key=data_key,
+            Body=csv_bytes,
+            ContentType="text/csv",
         )
         self._ensure_glue_database()
-        self._upsert_glue_table(safe_dataset_id, schema_profile, parquet_key)
+        self._upsert_glue_table(safe_dataset_id, schema_profile, data_key)
         self._write_dataset_manifest(safe_dataset_id, source_name, schema_profile)
         return {
             "dataset_id": safe_dataset_id,
             "table_name": f"dataset_{safe_dataset_id}",
             "raw_key": raw_key,
-            "parquet_key": parquet_key,
+            "data_key": data_key,
         }
 
     def cache_metrics(self, dataset_id: str, summary: dict[str, Any], metrics: list[dict[str, Any]]) -> None:
@@ -234,19 +234,16 @@ class AnalyticsStore:
                 }
         return summary
 
-    def _to_parquet_bytes(self, rows: list[dict[str, Any]], dataset_id: str) -> bytes:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        normalized_rows = []
+    def _to_csv_bytes(self, rows: list[dict[str, Any]], dataset_id: str, schema_profile: dict[str, Any]) -> bytes:
+        columns = [str(item["name"]) for item in schema_profile.get("columns", [])]
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=[*columns, "dataset_id"], extrasaction="ignore")
+        writer.writeheader()
         for row in rows:
-            normalized = {key: self._normalize_value(value) for key, value in row.items()}
+            normalized = {key: self._normalize_value(row.get(key, "")) for key in columns}
             normalized["dataset_id"] = dataset_id
-            normalized_rows.append(normalized)
-        table = pa.Table.from_pylist(normalized_rows)
-        buffer = io.BytesIO()
-        pq.write_table(table, buffer)
-        return buffer.getvalue()
+            writer.writerow(normalized)
+        return output.getvalue().encode("utf-8")
 
     def _ensure_glue_database(self) -> None:
         try:
@@ -254,7 +251,7 @@ class AnalyticsStore:
         except self.glue.exceptions.EntityNotFoundException:
             self.glue.create_database(DatabaseInput={"Name": self.glue_database})
 
-    def _upsert_glue_table(self, dataset_id: str, schema_profile: dict[str, Any], parquet_key: str) -> None:
+    def _upsert_glue_table(self, dataset_id: str, schema_profile: dict[str, Any], data_key: str) -> None:
         table_name = self.get_table_name(dataset_id)
         columns = [
             {"Name": item["name"], "Type": self._athena_type(item["kind"])}
@@ -264,14 +261,23 @@ class AnalyticsStore:
         table_input = {
             "Name": table_name,
             "TableType": "EXTERNAL_TABLE",
-            "Parameters": {"classification": "parquet", "EXTERNAL": "TRUE"},
+            "Parameters": {
+                "classification": "csv",
+                "EXTERNAL": "TRUE",
+                "skip.header.line.count": "1",
+            },
             "StorageDescriptor": {
                 "Columns": columns,
-                "Location": f"s3://{self.bucket_name}/{Path(parquet_key).parent.as_posix()}/",
-                "InputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
-                "OutputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat",
+                "Location": f"s3://{self.bucket_name}/{Path(data_key).parent.as_posix()}/",
+                "InputFormat": "org.apache.hadoop.mapred.TextInputFormat",
+                "OutputFormat": "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
                 "SerdeInfo": {
-                    "SerializationLibrary": "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+                    "SerializationLibrary": "org.apache.hadoop.hive.serde2.OpenCSVSerde",
+                    "Parameters": {
+                        "separatorChar": ",",
+                        "quoteChar": "\"",
+                        "escapeChar": "\\",
+                    },
                 },
             },
         }
