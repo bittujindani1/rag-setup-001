@@ -644,6 +644,37 @@ def _dataset_metrics_response(dataset_id: str, metrics: list[dict], summary: dic
     }
 
 
+def _load_or_rebuild_analytics_cache(dataset_id: str) -> dict | None:
+    analytics_store = get_analytics_store()
+    cached = analytics_store.load_metrics_cache(dataset_id)
+    if cached:
+        return cached
+
+    schema = analytics_store.get_schema(dataset_id)
+    if not schema:
+        return None
+
+    rows = analytics_store.load_dataset_rows(dataset_id)
+    if not rows:
+        return None
+
+    metrics = discover_metrics(dataset_id, schema, analytics_store.get_table_name(dataset_id))
+    summary = analytics_store.build_summary_metrics(rows, schema)
+    analytics_store.cache_metrics(dataset_id, summary, metrics)
+    refreshed = analytics_store.load_metrics_cache(dataset_id)
+    if refreshed:
+        refreshed["source"] = "regenerated"
+        return refreshed
+    return {
+        "dataset_id": dataset_id,
+        "generated_at": int(time.time()),
+        "expires_at": int(time.time()) + 3600,
+        "summary": summary,
+        "metrics": metrics,
+        "source": "regenerated",
+    }
+
+
 def _ingest_local_file(
     *,
     index_name: str,
@@ -1449,7 +1480,7 @@ async def get_analytics_schema(dataset_id: str):
 @app.get("/SFRAG/analytics/summary/{dataset_id}")
 async def get_analytics_summary(dataset_id: str):
     normalized = _validate_index_name(dataset_id)
-    cached = get_analytics_store().load_metrics_cache(normalized)
+    cached = _load_or_rebuild_analytics_cache(normalized)
     if not cached:
         raise HTTPException(status_code=404, detail="Analytics summary not found")
     return cached
@@ -1458,7 +1489,7 @@ async def get_analytics_summary(dataset_id: str):
 @app.get("/SFRAG/analytics/metrics/{dataset_id}")
 async def get_analytics_metrics(dataset_id: str):
     normalized = _validate_index_name(dataset_id)
-    cached = get_analytics_store().load_metrics_cache(normalized)
+    cached = _load_or_rebuild_analytics_cache(normalized)
     if not cached:
         raise HTTPException(status_code=404, detail="Analytics metrics not found")
     return _dataset_metrics_response(

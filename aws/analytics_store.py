@@ -236,6 +236,20 @@ class AnalyticsStore:
     def get_table_name(self, dataset_id: str) -> str:
         return f"dataset_{_safe_dataset_id(dataset_id)}"
 
+    def load_dataset_rows(self, dataset_id: str) -> list[dict[str, Any]]:
+        safe_dataset_id = _safe_dataset_id(dataset_id)
+        try:
+            response = self.s3.get_object(Bucket=self.bucket_name, Key=f"datasets/{safe_dataset_id}/tabular/data.csv")
+        except ClientError:
+            return []
+        text_stream = io.StringIO(response["Body"].read().decode("utf-8", errors="ignore"))
+        rows: list[dict[str, Any]] = []
+        for row in csv.DictReader(text_stream):
+            normalized = dict(row)
+            normalized.pop("dataset_id", None)
+            rows.append(normalized)
+        return rows
+
     def build_summary_metrics(self, rows: list[dict[str, Any]], schema_profile: dict[str, Any]) -> dict[str, Any]:
         total_rows = len(rows)
         summary: dict[str, Any] = {"total_rows": total_rows}
