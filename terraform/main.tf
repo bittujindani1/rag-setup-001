@@ -17,8 +17,9 @@ provider "aws" {
 }
 
 locals {
-  prefix = var.project_name
+  prefix           = var.project_name
   lambda_image_uri = var.lambda_image_uri != "" ? var.lambda_image_uri : "${aws_ecr_repository.rag_api.repository_url}:${var.lambda_image_tag}"
+  analytics_glue_database = replace("${var.project_name}_analytics", "-", "_")
 }
 
 resource "aws_s3_bucket" "documents" {
@@ -105,8 +106,8 @@ data "aws_iam_policy_document" "frontend_public_read" {
 }
 
 resource "aws_s3_bucket_policy" "frontend_public_read" {
-  bucket = aws_s3_bucket.frontend.id
-  policy = data.aws_iam_policy_document.frontend_public_read.json
+  bucket     = aws_s3_bucket.frontend.id
+  policy     = data.aws_iam_policy_document.frontend_public_read.json
   depends_on = [aws_s3_bucket_public_access_block.frontend]
 }
 
@@ -116,6 +117,14 @@ resource "aws_s3_bucket" "vectors" {
 
 resource "aws_s3_bucket" "extracted" {
   bucket = "${local.prefix}-extracted"
+}
+
+resource "aws_s3_bucket" "analytics" {
+  bucket = "${local.prefix}-analytics"
+}
+
+resource "aws_glue_catalog_database" "analytics" {
+  name = local.analytics_glue_database
 }
 
 resource "aws_dynamodb_table" "chat_history" {
@@ -292,6 +301,8 @@ data "aws_iam_policy_document" "rag_lambda_policy" {
 
   statement {
     actions = [
+      "dynamodb:BatchGetItem",
+      "dynamodb:DescribeTable",
       "dynamodb:GetItem",
       "dynamodb:PutItem",
       "dynamodb:DeleteItem",
@@ -327,13 +338,51 @@ data "aws_iam_policy_document" "rag_lambda_policy" {
       "${aws_s3_bucket.vectors.arn}/*",
       aws_s3_bucket.extracted.arn,
       "${aws_s3_bucket.extracted.arn}/*",
+      aws_s3_bucket.analytics.arn,
+      "${aws_s3_bucket.analytics.arn}/*",
     ]
   }
 
   statement {
     actions = [
+      "athena:StartQueryExecution",
+      "athena:GetQueryExecution",
+      "athena:GetQueryResults",
+      "athena:StopQueryExecution",
+      "athena:GetWorkGroup",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    actions = [
+      "glue:GetDatabase",
+      "glue:CreateDatabase",
+      "glue:GetTable",
+      "glue:CreateTable",
+      "glue:UpdateTable",
+    ]
+    resources = [
+      aws_glue_catalog_database.analytics.arn,
+      "arn:aws:glue:${var.aws_region}:*:catalog",
+      "arn:aws:glue:${var.aws_region}:*:database/${aws_glue_catalog_database.analytics.name}",
+      "arn:aws:glue:${var.aws_region}:*:table/${aws_glue_catalog_database.analytics.name}/*",
+    ]
+  }
+
+  statement {
+    actions = [
+      "bedrock:ListFoundationModels",
       "bedrock:InvokeModel",
       "bedrock:InvokeModelWithResponseStream",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    actions = [
+      "textract:AnalyzeDocument",
+      "textract:DetectDocumentText",
     ]
     resources = ["*"]
   }
@@ -364,6 +413,7 @@ resource "aws_lambda_function" "rag_api" {
       S3_BUCKET_DOCUMENTS                = aws_s3_bucket.documents.bucket
       S3_BUCKET_VECTORS                  = aws_s3_bucket.vectors.bucket
       S3_BUCKET_EXTRACTED                = aws_s3_bucket.extracted.bucket
+      S3_BUCKET_ANALYTICS                = aws_s3_bucket.analytics.bucket
       DYNAMODB_CHAT_HISTORY_TABLE        = aws_dynamodb_table.chat_history.name
       DYNAMODB_QUERY_CACHE_TABLE         = aws_dynamodb_table.query_cache.name
       DYNAMODB_DOC_STORE_TABLE           = aws_dynamodb_table.doc_store.name
@@ -373,6 +423,9 @@ resource "aws_lambda_function" "rag_api" {
       DYNAMODB_DOCUMENT_CATEGORIES_TABLE = aws_dynamodb_table.document_categories.name
       DYNAMODB_INGEST_JOBS_TABLE         = aws_dynamodb_table.ingest_jobs.name
       DYNAMODB_FEEDBACK_TABLE            = aws_dynamodb_table.feedback.name
+      GLUE_ANALYTICS_DATABASE            = aws_glue_catalog_database.analytics.name
+      ATHENA_WORKGROUP                   = "primary"
+      ANALYTICS_CACHE_TTL_SECONDS        = "3600"
       RATE_LIMIT_REQUESTS_PER_MINUTE     = "15"
     }
   }
@@ -401,8 +454,8 @@ resource "aws_lambda_permission" "allow_function_url" {
 }
 
 resource "aws_lambda_permission" "allow_function_url_invoke" {
-  statement_id           = "AllowPublicInvokeViaFunctionUrl"
-  action                 = "lambda:InvokeFunction"
-  function_name          = aws_lambda_function.rag_api.function_name
-  principal              = "*"
+  statement_id  = "AllowPublicInvokeViaFunctionUrl"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.rag_api.function_name
+  principal     = "*"
 }

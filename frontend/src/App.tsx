@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { AnalyticsTab } from './components/AnalyticsTab'
 import './App.css'
 
 type Message = {
@@ -171,6 +172,7 @@ function formatTimestamp(value: string): string {
 }
 
 function App() {
+  const [appView, setAppView] = useState<'chat' | 'analytics'>('chat')
   const [personalWorkspace, setPersonalWorkspace] = useState(DEFAULT_INDEX)
   const [personalWorkspaceHistory, setPersonalWorkspaceHistory] = useState<string[]>([])
   const [workspaceDraft, setWorkspaceDraft] = useState(DEFAULT_INDEX)
@@ -669,6 +671,17 @@ function App() {
               New
             </button>
           </div>
+          <div className="app-view-tabs">
+            <button className={`workspace-tab ${appView === 'chat' ? 'active' : ''}`} onClick={() => setAppView('chat')}>
+              Chat
+            </button>
+            <button className={`workspace-tab ${appView === 'analytics' ? 'active' : ''}`} onClick={() => setAppView('analytics')}>
+              Analytics
+            </button>
+          </div>
+          {appView === 'analytics' ? <p className="helper-text">Switch to the analytics tab to upload structured datasets and run SQL-backed insights.</p> : null}
+          {appView === 'chat' ? (
+            <>
           <div className="workspace-switcher">
             <button
               className={`workspace-tab ${activeWorkspace === 'personal' ? 'active' : ''}`}
@@ -765,292 +778,313 @@ function App() {
               </div>
             </div>
           ) : null}
+            </>
+          ) : null}
         </div>
-        <div className="panel grow">
-          <div className="panel-head">
-            <h2>Chat History</h2>
-          </div>
-          <div className="thread-list">
-            {historicalThreads.length === 0 ? <p className="history-empty">Past chats will appear here.</p> : null}
-            {historicalThreads.map((thread) => (
-              <div key={thread.id} className={`thread-item ${thread.id === activeThreadId ? 'active' : ''}`}>
-                <button className="thread-link" onClick={() => void openThread(thread.id)}>
-                  <strong>{summarizeThread(thread)}</strong>
-                  <span>{new Date(thread.createdAt).toLocaleString()}</span>
-                </button>
-                <div className="thread-actions">
-                  <button
-                    className="menu-button kebab-button"
-                    aria-label="Thread actions"
-                    onClick={() => setOpenMenuThreadId((current) => (current === thread.id ? null : thread.id))}
-                  >
-                    <span />
-                    <span />
-                    <span />
-                  </button>
-                  {openMenuThreadId === thread.id ? (
-                    <div className="thread-menu">
-                      {confirmDeleteThreadId === thread.id ? (
-                        <>
-                          <p className="thread-menu-copy">Delete this chat history?</p>
-                          <button className="thread-menu-item delete" onClick={() => void handleDeleteThread(thread.id)}>
-                            Confirm delete
-                          </button>
-                          <button className="thread-menu-item" onClick={() => setConfirmDeleteThreadId(null)}>
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <button className="thread-menu-item delete" onClick={() => setConfirmDeleteThreadId(thread.id)}>
-                          Delete chat
-                        </button>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
+        {appView === 'chat' ? (
+          <>
+            <div className="panel grow">
+              <div className="panel-head">
+                <h2>Chat History</h2>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="thread-list">
+                {historicalThreads.length === 0 ? <p className="history-empty">Past chats will appear here.</p> : null}
+                {historicalThreads.map((thread) => (
+                  <div key={thread.id} className={`thread-item ${thread.id === activeThreadId ? 'active' : ''}`}>
+                    <button className="thread-link" onClick={() => void openThread(thread.id)}>
+                      <strong>{summarizeThread(thread)}</strong>
+                      <span>{new Date(thread.createdAt).toLocaleString()}</span>
+                    </button>
+                    <div className="thread-actions">
+                      <button
+                        className="menu-button kebab-button"
+                        aria-label="Thread actions"
+                        onClick={() => setOpenMenuThreadId((current) => (current === thread.id ? null : thread.id))}
+                      >
+                        <span />
+                        <span />
+                        <span />
+                      </button>
+                      {openMenuThreadId === thread.id ? (
+                        <div className="thread-menu">
+                          {confirmDeleteThreadId === thread.id ? (
+                            <>
+                              <p className="thread-menu-copy">Delete this chat history?</p>
+                              <button className="thread-menu-item delete" onClick={() => void handleDeleteThread(thread.id)}>
+                                Confirm delete
+                              </button>
+                              <button className="thread-menu-item" onClick={() => setConfirmDeleteThreadId(null)}>
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button className="thread-menu-item delete" onClick={() => setConfirmDeleteThreadId(thread.id)}>
+                              Delete chat
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Categories</h2>
-          </div>
-          <div className="chip-wrap">
-            <button className={`chip ${selectedCategory === null ? 'selected' : ''}`} onClick={() => setSelectedCategory(null)}>
-              All
-            </button>
-            {categories.map((item) => (
-              <button
-                key={item.category}
-                className={`chip ${selectedCategory === item.category ? 'selected' : ''}`}
-                onClick={() => setSelectedCategory(item.category)}
-              >
-                {item.category} <span>{item.count}</span>
-              </button>
-            ))}
-          </div>
-        </div>
+            <div className="panel">
+              <div className="panel-head">
+                <h2>Categories</h2>
+              </div>
+              <div className="chip-wrap">
+                <button className={`chip ${selectedCategory === null ? 'selected' : ''}`} onClick={() => setSelectedCategory(null)}>
+                  All
+                </button>
+                {categories.map((item) => (
+                  <button
+                    key={item.category}
+                    className={`chip ${selectedCategory === item.category ? 'selected' : ''}`}
+                    onClick={() => setSelectedCategory(item.category)}
+                  >
+                    {item.category} <span>{item.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : null}
       </aside>
 
       <main className="workspace">
-        <section className="hero-card">
-          <div>
-            <p className="eyebrow">Cost-lean local implementation</p>
-            <h2>
-              {isSharedWorkspace
-                ? 'Explore shared demo documents safely'
-                : isSnowWorkspace
-                  ? 'Analyze ServiceNow ticket history from the dedicated snow_idx index'
-                  : 'Upload docs and test your own isolated workspace'}
-            </h2>
-            <p className="helper-text strong">Active workspace: {indexName}</p>
-            <div className="workspace-meta-row">
-              <span className="hero-badge">{isReadOnlyWorkspace ? 'Read-only' : 'Read / Write'}</span>
-              <span className="hero-badge subtle">{loadingMessage}</span>
-              {uploadPolicy?.is_exception_workspace ? <span className="hero-badge exception">Limit exception active</span> : null}
-            </div>
-            <div className="policy-summary-row">
-              <span className="hero-badge subtle">
-                {(uploadPolicy?.supported_types ?? ['pdf', 'txt', 'docx', 'xlsx']).map((item) => item.toUpperCase()).join(', ')}
-              </span>
-              <span className="hero-badge subtle">
-                {isSnowWorkspace ? 'Preloaded tickets' : `Up to ${uploadPolicy?.max_upload_mb ?? 5} MB`}
-              </span>
-              {uploadPolicy?.workspace_document_limit ? (
-                <span className="hero-badge subtle">
-                  {uploadPolicy.workspace_document_count} / {uploadPolicy.workspace_document_limit} docs
-                </span>
-              ) : null}
-            </div>
-            {uploadPolicyNotices.length > 0 ? (
-              <div className="policy-notice compact">
-                {uploadPolicyNotices.map((notice) => (
-                  <p key={notice}>{notice}</p>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <form className="upload-form" onSubmit={(event) => void handleUpload(event)}>
-            <input
-              type="file"
-              accept=".pdf,.txt,.docx,.xlsx"
-              disabled={isReadOnlyWorkspace}
-              onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
-            />
-            <button type="submit" disabled={busy || !uploadFile || isReadOnlyWorkspace}>
-              {busy ? 'Working...' : isReadOnlyWorkspace ? 'Read-only' : 'Upload'}
-            </button>
-          </form>
-        </section>
-        <section className="content-grid">
-          <div className="chat-card">
-            <div className="chat-log" ref={chatLogRef}>
-              {busy && messages.length === 0 ? (
-                <div className="chat-skeleton">
-                  <div className="skeleton-line wide" />
-                  <div className="skeleton-line" />
-                  <div className="skeleton-line short" />
+        {appView === 'analytics' ? (
+          <>
+            <AnalyticsTab apiBaseUrl={API_BASE_URL} pushToast={pushToast} />
+            <div className="toast-stack" aria-live="polite">
+              {toasts.map((toast) => (
+                <div key={toast.id} className={`toast ${toast.tone}`}>
+                  {toast.message}
                 </div>
-              ) : null}
-              {messages.length === 0 && !busy ? (
-                <div className="empty-state">
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <section className="hero-card">
+              <div>
+                <p className="eyebrow">Cost-lean local implementation</p>
+                <h2>
                   {isSharedWorkspace
-                    ? 'Ask questions against the shared demo workspace.'
+                    ? 'Explore shared demo documents safely'
                     : isSnowWorkspace
-                      ? 'Ask about recurring incidents, root causes, assignment groups, or ask for ticket summaries in table format.'
-                      : 'Start a thread or upload a document to begin.'}
+                      ? 'Analyze ServiceNow ticket history from the dedicated snow_idx index'
+                      : 'Upload docs and test your own isolated workspace'}
+                </h2>
+                <p className="helper-text strong">Active workspace: {indexName}</p>
+                <div className="workspace-meta-row">
+                  <span className="hero-badge">{isReadOnlyWorkspace ? 'Read-only' : 'Read / Write'}</span>
+                  <span className="hero-badge subtle">{loadingMessage}</span>
+                  {uploadPolicy?.is_exception_workspace ? <span className="hero-badge exception">Limit exception active</span> : null}
                 </div>
-              ) : (
-                orderedMessages.map((message, index) => (
-                  <article key={`${message.role}-${index}`} className={`bubble ${message.role}`}>
-                    <div className="bubble-topline">
-                      <div className="bubble-identity">
-                        <div className={`avatar ${message.role}`}>{message.role === 'user' ? 'U' : 'AI'}</div>
-                        <div>
-                          <span>{message.role === 'user' ? 'You' : 'Assistant'}</span>
-                          <small>{formatTimestamp(message.timestamp)}</small>
-                        </div>
-                      </div>
-                      {message.role === 'assistant' ? (
-                        <button className="copy-button" onClick={() => void copyMessage(message.content)}>
-                          Copy
-                        </button>
-                      ) : null}
-                    </div>
-                    <div className="bubble-body">
-                      {message.role === 'assistant' ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                      ) : (
-                        <p>{message.content}</p>
-                      )}
-                    </div>
-                  </article>
-                ))
-              )}
-            </div>
-
-            {pendingQuestion ? (
-              <div className="clarify-box">
-                <p>Choose a category for: "{pendingQuestion}"</p>
-                <div className="chip-wrap">
-                  {categories.map((item) => (
-                    <button key={item.category} className="chip selected" onClick={() => void handleSend(pendingQuestion, item.category)}>
-                      {item.category}
-                    </button>
-                  ))}
+                <div className="policy-summary-row">
+                  <span className="hero-badge subtle">
+                    {(uploadPolicy?.supported_types ?? ['pdf', 'txt', 'docx', 'xlsx']).map((item) => item.toUpperCase()).join(', ')}
+                  </span>
+                  <span className="hero-badge subtle">
+                    {isSnowWorkspace ? 'Preloaded tickets' : `Up to ${uploadPolicy?.max_upload_mb ?? 5} MB`}
+                  </span>
+                  {uploadPolicy?.workspace_document_limit ? (
+                    <span className="hero-badge subtle">
+                      {uploadPolicy.workspace_document_count} / {uploadPolicy.workspace_document_limit} docs
+                    </span>
+                  ) : null}
                 </div>
+                {uploadPolicyNotices.length > 0 ? (
+                  <div className="policy-notice compact">
+                    {uploadPolicyNotices.map((notice) => (
+                      <p key={notice}>{notice}</p>
+                    ))}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-
-            <form
-              className="composer"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void handleSend()
-              }}
-            >
-              <div className="composer-main">
-                <textarea
-                  value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
-                  placeholder={
-                    isSnowWorkspace
-                      ? 'Ask about repeat incidents, priorities, root causes, or ask to show ServiceNow tickets in table format...'
-                      : 'Ask about coverage, claims, policy details, or similar support tickets...'
-                  }
+              <form className="upload-form" onSubmit={(event) => void handleUpload(event)}>
+                <input
+                  type="file"
+                  accept=".pdf,.txt,.docx,.xlsx"
+                  disabled={isReadOnlyWorkspace}
+                  onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
                 />
-                <div className="composer-toolbar">
-                  <label className="image-attach-button">
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/jpg,image/webp"
-                      onChange={(event) => setChatImageFile(event.target.files?.[0] ?? null)}
-                    />
-                    Add image
-                  </label>
-                  {chatImageFile ? (
-                    <div className="attachment-pill">
-                      <span>{chatImageFile.name}</span>
-                      <button type="button" className="attachment-clear" onClick={() => setChatImageFile(null)}>
-                        x
-                      </button>
+                <button type="submit" disabled={busy || !uploadFile || isReadOnlyWorkspace}>
+                  {busy ? 'Working...' : isReadOnlyWorkspace ? 'Read-only' : 'Upload'}
+                </button>
+              </form>
+            </section>
+            <section className="content-grid">
+              <div className="chat-card">
+                <div className="chat-log" ref={chatLogRef}>
+                  {busy && messages.length === 0 ? (
+                    <div className="chat-skeleton">
+                      <div className="skeleton-line wide" />
+                      <div className="skeleton-line" />
+                      <div className="skeleton-line short" />
+                    </div>
+                  ) : null}
+                  {messages.length === 0 && !busy ? (
+                    <div className="empty-state">
+                      {isSharedWorkspace
+                        ? 'Ask questions against the shared demo workspace.'
+                        : isSnowWorkspace
+                          ? 'Ask about recurring incidents, root causes, assignment groups, or ask for ticket summaries in table format.'
+                          : 'Start a thread or upload a document to begin.'}
                     </div>
                   ) : (
-                    <span className="composer-hint">Attach a screenshot to extract and answer the question from it.</span>
+                    orderedMessages.map((message, index) => (
+                      <article key={`${message.role}-${index}`} className={`bubble ${message.role}`}>
+                        <div className="bubble-topline">
+                          <div className="bubble-identity">
+                            <div className={`avatar ${message.role}`}>{message.role === 'user' ? 'U' : 'AI'}</div>
+                            <div>
+                              <span>{message.role === 'user' ? 'You' : 'Assistant'}</span>
+                              <small>{formatTimestamp(message.timestamp)}</small>
+                            </div>
+                          </div>
+                          {message.role === 'assistant' ? (
+                            <button className="copy-button" onClick={() => void copyMessage(message.content)}>
+                              Copy
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="bubble-body">
+                          {message.role === 'assistant' ? (
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                          ) : (
+                            <p>{message.content}</p>
+                          )}
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+
+                {pendingQuestion ? (
+                  <div className="clarify-box">
+                    <p>Choose a category for: "{pendingQuestion}"</p>
+                    <div className="chip-wrap">
+                      {categories.map((item) => (
+                        <button key={item.category} className="chip selected" onClick={() => void handleSend(pendingQuestion, item.category)}>
+                          {item.category}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <form
+                  className="composer"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void handleSend()
+                  }}
+                >
+                  <div className="composer-main">
+                    <textarea
+                      value={question}
+                      onChange={(event) => setQuestion(event.target.value)}
+                      placeholder={
+                        isSnowWorkspace
+                          ? 'Ask about repeat incidents, priorities, root causes, or ask to show ServiceNow tickets in table format...'
+                          : 'Ask about coverage, claims, policy details, or similar support tickets...'
+                      }
+                    />
+                    <div className="composer-toolbar">
+                      <label className="image-attach-button">
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/jpg,image/webp"
+                          onChange={(event) => setChatImageFile(event.target.files?.[0] ?? null)}
+                        />
+                        Add image
+                      </label>
+                      {chatImageFile ? (
+                        <div className="attachment-pill">
+                          <span>{chatImageFile.name}</span>
+                          <button type="button" className="attachment-clear" onClick={() => setChatImageFile(null)}>
+                            x
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="composer-hint">Attach a screenshot to extract and answer the question from it.</span>
+                      )}
+                    </div>
+                  </div>
+                  <button type="submit" disabled={busy || (!question.trim() && !chatImageFile)}>
+                    {busy ? 'Thinking...' : chatImageFile ? 'Ask from image' : 'Send'}
+                  </button>
+                </form>
+              </div>
+
+              <div className="side-stack">
+                <div className="side-card">
+                  <button className="accordion-toggle" onClick={() => setDocumentsOpen((current) => !current)}>
+                    <span>Indexed documents</span>
+                    <div className="accordion-meta">
+                      <span className="accordion-count">{documents.length}</span>
+                      <span className={`accordion-chevron ${documentsOpen ? 'open' : ''}`}>^</span>
+                    </div>
+                  </button>
+                  {documentsOpen ? (
+                    <div className="document-list">
+                      {documents.map((document) => (
+                        <article key={document.filename} className="document-item">
+                          <header>
+                            <strong>{document.filename}</strong>
+                            <span className="badge">{document.category}</span>
+                          </header>
+                          <p>{document.content_type || 'unknown type'}</p>
+                          <small>{formatBytes(document.size_bytes)}</small>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="accordion-helper">Expand to inspect uploaded files and detected categories.</p>
+                  )}
+                </div>
+
+                <div className="side-card">
+                  <button className="accordion-toggle" onClick={() => setFeedbackOpen((current) => !current)}>
+                    <span>Feedback</span>
+                    <span className={`accordion-chevron ${feedbackOpen ? 'open' : ''}`}>^</span>
+                  </button>
+                  {feedbackOpen ? (
+                    <form className="feedback-form" onSubmit={(event) => void handleFeedbackSubmit(event)}>
+                      <label className="field">
+                        <span>User ID</span>
+                        <input value={feedbackUserId} onChange={(event) => setFeedbackUserId(event.target.value)} placeholder="your.id@company.com" />
+                      </label>
+                      <label className="field">
+                        <span>Feedback</span>
+                        <textarea
+                          value={feedbackText}
+                          onChange={(event) => setFeedbackText(event.target.value)}
+                          placeholder="What worked well, what felt confusing, and what should improve?"
+                        />
+                      </label>
+                      <button type="submit" disabled={busy || !feedbackUserId.trim() || !feedbackText.trim()}>
+                        Submit feedback
+                      </button>
+                    </form>
+                  ) : (
+                    <p className="accordion-helper">Open to share quick feedback after your demo test.</p>
                   )}
                 </div>
               </div>
-              <button type="submit" disabled={busy || (!question.trim() && !chatImageFile)}>
-                {busy ? 'Thinking...' : chatImageFile ? 'Ask from image' : 'Send'}
-              </button>
-            </form>
-          </div>
-
-          <div className="side-stack">
-            <div className="side-card">
-              <button className="accordion-toggle" onClick={() => setDocumentsOpen((current) => !current)}>
-                <span>Indexed documents</span>
-                <div className="accordion-meta">
-                  <span className="accordion-count">{documents.length}</span>
-                  <span className={`accordion-chevron ${documentsOpen ? 'open' : ''}`}>^</span>
+            </section>
+            <div className="toast-stack" aria-live="polite">
+              {toasts.map((toast) => (
+                <div key={toast.id} className={`toast ${toast.tone}`}>
+                  {toast.message}
                 </div>
-              </button>
-              {documentsOpen ? (
-                <div className="document-list">
-                  {documents.map((document) => (
-                    <article key={document.filename} className="document-item">
-                      <header>
-                        <strong>{document.filename}</strong>
-                        <span className="badge">{document.category}</span>
-                      </header>
-                      <p>{document.content_type || 'unknown type'}</p>
-                      <small>{formatBytes(document.size_bytes)}</small>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="accordion-helper">Expand to inspect uploaded files and detected categories.</p>
-              )}
+              ))}
             </div>
-
-            <div className="side-card">
-              <button className="accordion-toggle" onClick={() => setFeedbackOpen((current) => !current)}>
-                <span>Feedback</span>
-                <span className={`accordion-chevron ${feedbackOpen ? 'open' : ''}`}>^</span>
-              </button>
-              {feedbackOpen ? (
-                <form className="feedback-form" onSubmit={(event) => void handleFeedbackSubmit(event)}>
-                  <label className="field">
-                    <span>User ID</span>
-                    <input value={feedbackUserId} onChange={(event) => setFeedbackUserId(event.target.value)} placeholder="your.id@company.com" />
-                  </label>
-                  <label className="field">
-                    <span>Feedback</span>
-                    <textarea
-                      value={feedbackText}
-                      onChange={(event) => setFeedbackText(event.target.value)}
-                      placeholder="What worked well, what felt confusing, and what should improve?"
-                    />
-                  </label>
-                  <button type="submit" disabled={busy || !feedbackUserId.trim() || !feedbackText.trim()}>
-                    Submit feedback
-                  </button>
-                </form>
-              ) : (
-                <p className="accordion-helper">Open to share quick feedback after your demo test.</p>
-              )}
-            </div>
-          </div>
-        </section>
-        <div className="toast-stack" aria-live="polite">
-          {toasts.map((toast) => (
-            <div key={toast.id} className={`toast ${toast.tone}`}>
-              {toast.message}
-            </div>
-          ))}
-        </div>
+          </>
+        )}
       </main>
 
       {showUploadWarning ? (

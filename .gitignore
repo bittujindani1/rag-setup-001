@@ -18,6 +18,8 @@ frontend/.env.production
 terraform/.terraform/
 terraform/.terraform.lock.hcl
 terraform/*.tfplan
+terraform/*.tfstate
+terraform/*.tfstate.backup
 
 scripts/generated/
 

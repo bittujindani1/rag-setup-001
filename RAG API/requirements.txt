@@ -31,3 +31,5 @@ PyMuPDF==1.24.14
 python-docx
 openpyxl
 numpy==1.26.4
+pyarrow
+sqlglot

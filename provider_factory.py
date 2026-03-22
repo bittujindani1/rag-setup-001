@@ -4,6 +4,7 @@ from functools import lru_cache
 
 from config_loader import load_app_config
 from aws.bedrock_client import BedrockClient
+from aws.analytics_store import AnalyticsStore
 from aws.cache_manager import DynamoDBCacheManager
 from aws.dynamodb_store import (
     ConversationAuditStore,
@@ -89,6 +90,18 @@ def get_feedback_store() -> DynamoDBFeedbackStore:
     return DynamoDBFeedbackStore(
         table_name=config["dynamodb_feedback_table"],
         region_name=config["aws_region"],
+    )
+
+
+@lru_cache(maxsize=1)
+def get_analytics_store() -> AnalyticsStore:
+    config = get_config()
+    return AnalyticsStore(
+        region_name=config["aws_region"],
+        bucket_name=config["s3_bucket_analytics"],
+        glue_database=config["glue_analytics_database"],
+        athena_workgroup=config.get("athena_workgroup", "primary"),
+        metrics_ttl_seconds=int(config.get("analytics_cache_ttl_seconds", 3600)),
     )
 
 

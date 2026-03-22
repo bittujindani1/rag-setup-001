@@ -24,6 +24,10 @@ _DEFAULTS: Dict[str, Any] = {
     "dynamodb_document_categories_table": "rag_document_categories",
     "dynamodb_ingest_jobs_table": "rag_ingest_jobs",
     "dynamodb_feedback_table": "rag_user_feedback",
+    "s3_bucket_analytics": "rag-serverless-analytics",
+    "glue_analytics_database": "rag_serverless_analytics",
+    "athena_workgroup": "primary",
+    "analytics_cache_ttl_seconds": 3600,
     "rate_limit_requests_per_minute": 15,
     "reranker": {
         "enabled": True,
@@ -64,6 +68,7 @@ def load_app_config() -> Dict[str, Any]:
         "s3_bucket_documents": os.getenv("S3_BUCKET_DOCUMENTS"),
         "s3_bucket_vectors": os.getenv("S3_BUCKET_VECTORS"),
         "s3_bucket_extracted": os.getenv("S3_BUCKET_EXTRACTED"),
+        "s3_bucket_analytics": os.getenv("S3_BUCKET_ANALYTICS"),
         "dynamodb_chat_history_table": os.getenv("DYNAMODB_CHAT_HISTORY_TABLE"),
         "dynamodb_query_cache_table": os.getenv("DYNAMODB_QUERY_CACHE_TABLE"),
         "dynamodb_doc_store_table": os.getenv("DYNAMODB_DOC_STORE_TABLE"),
@@ -73,6 +78,8 @@ def load_app_config() -> Dict[str, Any]:
         "dynamodb_document_categories_table": os.getenv("DYNAMODB_DOCUMENT_CATEGORIES_TABLE"),
         "dynamodb_ingest_jobs_table": os.getenv("DYNAMODB_INGEST_JOBS_TABLE"),
         "dynamodb_feedback_table": os.getenv("DYNAMODB_FEEDBACK_TABLE"),
+        "glue_analytics_database": os.getenv("GLUE_ANALYTICS_DATABASE"),
+        "athena_workgroup": os.getenv("ATHENA_WORKGROUP"),
         "frontend_url": os.getenv("FRONTEND_URL"),
     }
     for key, value in env_overrides.items():
@@ -85,5 +92,7 @@ def load_app_config() -> Dict[str, Any]:
         merged["cache_ttl_seconds"] = int(os.getenv("CACHE_TTL_SECONDS", "86400"))
     if os.getenv("RATE_LIMIT_REQUESTS_PER_MINUTE"):
         merged["rate_limit_requests_per_minute"] = int(os.getenv("RATE_LIMIT_REQUESTS_PER_MINUTE", "15"))
+    if os.getenv("ANALYTICS_CACHE_TTL_SECONDS"):
+        merged["analytics_cache_ttl_seconds"] = int(os.getenv("ANALYTICS_CACHE_TTL_SECONDS", "3600"))
 
     return merged

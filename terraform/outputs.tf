@@ -10,6 +10,14 @@ output "extracted_bucket" {
   value = aws_s3_bucket.extracted.bucket
 }
 
+output "analytics_bucket" {
+  value = aws_s3_bucket.analytics.bucket
+}
+
+output "analytics_glue_database" {
+  value = aws_glue_catalog_database.analytics.name
+}
+
 output "frontend_bucket" {
   value = aws_s3_bucket.frontend.bucket
 }

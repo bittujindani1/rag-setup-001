@@ -26,6 +26,9 @@ from citations import get_citations
 from customchain import multi_modal_rag_chain_with_history
 from customretriever import create_ensemble_retriever, create_retriever
 from document_router import build_disambiguation_payload
+from metric_discovery import discover_metrics
+from query_classifier import classify_query_route
+from sql_validator import validate_sql
 from document_support import (
     build_text_result,
     extract_text_chunks,
@@ -40,6 +43,7 @@ from document_support import (
     validate_ticket_upload,
     validate_upload,
 )
+from text_to_sql import generate_sql_for_question
 from external_utils import download_blob, get_presigned_url, upload_pdf_and_download_json, upload_to_blob
 from extraction import extract_imageresult, extract_tableresult, extract_textresult
 from ingest_doc import create_multi_vector_retriever
@@ -62,6 +66,7 @@ from provider_factory import (
     get_bedrock_client,
     get_cache_manager,
     get_config,
+    get_analytics_store,
     get_document_category_store,
     get_doc_store,
     get_feedback_store,
@@ -271,6 +276,15 @@ class FeedbackRequest(BaseModel):
     user_id: str
     workspace_id: str
     feedback: str
+
+
+class AnalyticsQueryRequest(BaseModel):
+    dataset_id: str
+    question: str
+
+
+class AnalyticsDatasetCreateRequest(BaseModel):
+    dataset_id: str
 
 
 def _match_direct_intent(query: str) -> str | None:
@@ -549,6 +563,50 @@ def _index_text_document(
         "content_type": content_type,
         "warnings": [],
         "processing_mode": "text_only",
+    }
+
+
+def _analytics_summary_text(question: str, result: dict, chart_type: str) -> str:
+    rows = result.get("rows", [])
+    if not rows:
+        return "No matching rows were found in the analytics dataset."
+    if chart_type == "number" and rows and len(rows[0]) == 1:
+        value = next(iter(rows[0].values()))
+        return f"{question.strip().rstrip('?')}: {value}"
+    if chart_type in {"bar", "line"} and len(rows[0]) >= 2:
+        preview = ", ".join(
+            f"{list(row.values())[0]} = {list(row.values())[1]}"
+            for row in rows[:5]
+        )
+        return f"Executed analytics query successfully. Top results: {preview}"
+    return "Executed analytics query successfully. Review the returned rows for the exact result set."
+
+
+def _normalize_metric_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").strip().lower()).strip()
+
+
+def _match_cached_metric(question: str, cached_metrics: list[dict[str, Any]]) -> dict[str, Any] | None:
+    normalized_question = _normalize_metric_key(question)
+    if not normalized_question:
+        return None
+
+    for metric in cached_metrics:
+        metric_id = _normalize_metric_key(str(metric.get("metric_id", "")))
+        metric_title = _normalize_metric_key(str(metric.get("title", "")))
+        if normalized_question in {metric_id, metric_title}:
+            return metric
+        if metric_title and (normalized_question.startswith(metric_title) or metric_title in normalized_question):
+            return metric
+    return None
+
+
+def _dataset_metrics_response(dataset_id: str, metrics: list[dict], summary: dict, source: str) -> dict:
+    return {
+        "dataset_id": dataset_id,
+        "source": source,
+        "summary": summary,
+        "metrics": metrics,
     }
 
 
@@ -1328,4 +1386,125 @@ async def retrieval_from_image(
         "filename": file.filename,
     }
     return JSONResponse(content=payload)
+
+
+@app.get("/SFRAG/analytics/datasets")
+async def list_analytics_datasets():
+    return {"datasets": get_analytics_store().list_datasets()}
+
+
+@app.get("/SFRAG/analytics/schema/{dataset_id}")
+async def get_analytics_schema(dataset_id: str):
+    normalized = _validate_index_name(dataset_id)
+    schema = get_analytics_store().get_schema(normalized)
+    if not schema:
+        raise HTTPException(status_code=404, detail="Analytics dataset not found")
+    return {"dataset_id": normalized, "schema": schema}
+
+
+@app.get("/SFRAG/analytics/summary/{dataset_id}")
+async def get_analytics_summary(dataset_id: str):
+    normalized = _validate_index_name(dataset_id)
+    cached = get_analytics_store().load_metrics_cache(normalized)
+    if not cached:
+        raise HTTPException(status_code=404, detail="Analytics summary not found")
+    return cached
+
+
+@app.get("/SFRAG/analytics/metrics/{dataset_id}")
+async def get_analytics_metrics(dataset_id: str):
+    normalized = _validate_index_name(dataset_id)
+    cached = get_analytics_store().load_metrics_cache(normalized)
+    if not cached:
+        raise HTTPException(status_code=404, detail="Analytics metrics not found")
+    return _dataset_metrics_response(
+        normalized,
+        cached.get("metrics", []),
+        cached.get("summary", {}),
+        cached.get("source", "cache"),
+    )
+
+
+@app.post("/SFRAG/analytics/upload")
+async def upload_analytics_dataset(dataset_id: str = Form(...), file: UploadFile = File(...)):
+    normalized = _validate_index_name(dataset_id)
+    file_bytes = await file.read()
+    analytics_store = get_analytics_store()
+    rows = analytics_store.parse_structured_file(file.filename, file_bytes)
+    if not rows:
+        raise HTTPException(status_code=400, detail="No structured rows found in the uploaded dataset.")
+
+    schema_profile = analytics_store.profile_schema(rows)
+    storage_info = analytics_store.store_dataset(
+        dataset_id=normalized,
+        source_name=file.filename,
+        file_bytes=file_bytes,
+        rows=rows,
+        schema_profile=schema_profile,
+    )
+    metrics = discover_metrics(normalized, schema_profile, storage_info["table_name"])
+    summary = analytics_store.build_summary_metrics(rows, schema_profile)
+    analytics_store.cache_metrics(normalized, summary, metrics)
+    return {
+        "status": "dataset_uploaded",
+        "dataset_id": normalized,
+        "table_name": storage_info["table_name"],
+        "row_count": len(rows),
+        "schema": schema_profile,
+        "metrics": metrics,
+        "summary": summary,
+        "source": "s3",
+    }
+
+
+@app.post("/SFRAG/analytics/query")
+async def query_analytics(request: AnalyticsQueryRequest):
+    dataset_id = _validate_index_name(request.dataset_id)
+    analytics_store = get_analytics_store()
+    schema = analytics_store.get_schema(dataset_id)
+    if not schema:
+        raise HTTPException(status_code=404, detail="Analytics dataset not found")
+
+    classification = classify_query_route(request.question, schema)
+    table_name = analytics_store.get_table_name(dataset_id)
+    cached_bundle = analytics_store.load_metrics_cache(dataset_id) or {}
+    cached_metric = _match_cached_metric(request.question, cached_bundle.get("metrics", []))
+
+    if cached_metric:
+        metric_id = str(cached_metric.get("metric_id", ""))
+        cached_metric_result = analytics_store.load_metric_result(dataset_id, metric_id) if metric_id else None
+        if cached_metric_result:
+            cached_metric_result["source"] = "cache"
+            cached_metric_result["route"] = classification["route"]
+            cached_metric_result["reason"] = classification["reason"]
+            return cached_metric_result
+        sql = str(cached_metric.get("sql", "")).strip()
+        chart_type = str(cached_metric.get("chart_type", "table"))
+    else:
+        sql, chart_type = generate_sql_for_question(
+            request.question,
+            dataset_id=dataset_id,
+            table_name=table_name,
+            schema_profile=schema,
+        )
+    validated_sql = validate_sql(sql, allowed_tables={table_name})
+    result = analytics_store.execute_query(dataset_id=dataset_id, sql=validated_sql)
+    response_payload = {
+        "dataset_id": dataset_id,
+        "route": classification["route"],
+        "reason": classification["reason"],
+        "sql": validated_sql,
+        "result": result,
+        "chart_type": chart_type,
+        "answer": _analytics_summary_text(request.question, result, chart_type),
+        "source": result.get("source", "athena"),
+    }
+    if cached_metric:
+        analytics_store.cache_metric_result(dataset_id, str(cached_metric.get("metric_id", "adhoc_metric")), response_payload)
+    return response_payload
+
+
+@app.post("/SFRAG/analytics/chat")
+async def chat_analytics(request: AnalyticsQueryRequest):
+    return await query_analytics(request)
 
