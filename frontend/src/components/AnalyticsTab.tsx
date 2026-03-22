@@ -279,6 +279,9 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
   const [metricChartOverrides, setMetricChartOverrides] = useState<Record<string, ChartOption>>({})
   const [answerChartOverride, setAnswerChartOverride] = useState<ChartOption | null>(null)
   const [busy, setBusy] = useState(false)
+  const [showUploadWarning, setShowUploadWarning] = useState(false)
+  const [uploadStatusMessage, setUploadStatusMessage] = useState('')
+  const [uploadStage, setUploadStage] = useState<'idle' | 'uploading' | 'processing' | 'complete'>('idle')
   const selectedDatasetMeta = useMemo(
     () => datasets.find((dataset) => dataset.dataset_id === selectedDataset) ?? null,
     [datasets, selectedDataset],
@@ -331,10 +334,12 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     }
   }, [selectedDataset])
 
-  async function handleUpload() {
+  async function performUpload() {
     if (!uploadFile || !datasetDraft.trim()) return
     try {
       setBusy(true)
+      setUploadStage('uploading')
+      setUploadStatusMessage(`Uploading ${uploadFile.name} into ${datasetDraft.trim()}...`)
       const form = new FormData()
       form.append('dataset_id', datasetDraft.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_'))
       form.append('file', uploadFile)
@@ -345,17 +350,28 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
         method: 'POST',
         body: form,
       })
+      setUploadStage('processing')
+      setUploadStatusMessage(`Processing ${response.row_count} rows for ${response.dataset_id}...`)
       setUploadFile(null)
       pushToast(`Analytics dataset ${response.dataset_id} uploaded with ${response.row_count} rows.`, 'success')
       await loadDatasets(response.dataset_id)
       await hydrateDashboard(response.dataset_id)
       setAnalyticsQuestion('')
       setAnalyticsAnswer(null)
+      setUploadStage('complete')
+      setUploadStatusMessage(`Analytics dataset ${response.dataset_id} is ready with ${response.row_count} rows.`)
     } catch (error) {
+      setUploadStage('idle')
+      setUploadStatusMessage('')
       pushToast(error instanceof Error ? error.message : 'Analytics upload failed.', 'error')
     } finally {
       setBusy(false)
     }
+  }
+
+  function handleUploadIntent() {
+    if (!uploadFile || !datasetDraft.trim()) return
+    setShowUploadWarning(true)
   }
 
   async function handleAnalyticsQuery() {
@@ -382,7 +398,8 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
   const summaryCards = useMemo(() => Object.entries(summary), [summary])
 
   return (
-    <section className="analytics-shell">
+    <>
+      <section className="analytics-shell">
       <header className="analytics-header">
         <div>
           <p className="eyebrow">Structured Analytics</p>
@@ -392,11 +409,31 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
         <div className="analytics-upload">
           <input value={datasetDraft} onChange={(event) => setDatasetDraft(event.target.value)} placeholder="dataset_id" />
           <input type="file" accept=".csv,.json,.xlsx" onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)} />
-          <button type="button" onClick={() => void handleUpload()} disabled={busy || !uploadFile || !datasetDraft.trim()}>
+          <button type="button" onClick={() => handleUploadIntent()} disabled={busy || !uploadFile || !datasetDraft.trim()}>
             {busy ? 'Working...' : 'Upload dataset'}
           </button>
         </div>
       </header>
+
+      {uploadStatusMessage ? (
+        <section className={`analytics-upload-status ${uploadStage}`}>
+          <div className="analytics-upload-status-copy">
+            <strong>
+              {uploadStage === 'uploading'
+                ? 'Uploading dataset'
+                : uploadStage === 'processing'
+                  ? 'Preparing analytics'
+                  : uploadStage === 'complete'
+                    ? 'Dataset ready'
+                    : 'Upload status'}
+            </strong>
+            <p>{uploadStatusMessage}</p>
+          </div>
+          <div className="analytics-progress-track" aria-hidden="true">
+            <div className={`analytics-progress-bar ${uploadStage}`} />
+          </div>
+        </section>
+      ) : null}
 
       <div className="analytics-layout">
         <aside className="analytics-sidebar">
@@ -616,6 +653,46 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
           </section>
         </div>
       </div>
-    </section>
+      </section>
+
+      {showUploadWarning ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-card" role="dialog" aria-modal="true" aria-labelledby="analytics-upload-warning-title">
+            <p className="eyebrow">Upload Warning</p>
+            <h2 id="analytics-upload-warning-title">Use only non-sensitive structured data</h2>
+            <p className="modal-copy">
+              This analytics lane is for safe demo datasets only. Do not upload critical, regulated, confidential, or PII data.
+            </p>
+            <ul className="policy-list modal-policy-list">
+              <li>Supported file types: CSV, JSON, XLSX.</li>
+              <li>Best fit: operational datasets, cost tables, KPI exports, ticket histories, and spreadsheet-based summaries.</li>
+              <li>Avoid sensitive employee, customer, health, payment, or production secrets in uploads.</li>
+              <li>Large datasets may take a little longer because the system profiles schema, writes analytics storage, and prepares KPI cards.</li>
+              <li>Upload status will stay visible on the page until the dataset is ready.</li>
+            </ul>
+            <div className="modal-actions">
+              <button
+                className="ghost-button"
+                onClick={() => {
+                  setShowUploadWarning(false)
+                  pushToast('Analytics upload cancelled.', 'info')
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => {
+                  setShowUploadWarning(false)
+                  void performUpload()
+                }}
+              >
+                I Understand, Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   )
 }

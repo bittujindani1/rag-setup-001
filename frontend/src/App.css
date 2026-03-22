@@ -926,6 +926,54 @@ button {
   background: rgba(255, 255, 255, 0.72);
 }
 
+.analytics-upload-status {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(15, 118, 110, 0.12);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.analytics-upload-status-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.analytics-upload-status-copy strong {
+  font-size: 0.95rem;
+}
+
+.analytics-upload-status-copy p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.analytics-progress-track {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(15, 118, 110, 0.1);
+}
+
+.analytics-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0f766e, #14b8a6);
+}
+
+.analytics-progress-bar.uploading,
+.analytics-progress-bar.processing {
+  width: 42%;
+  animation: analyticsProgress 1.2s ease-in-out infinite;
+}
+
+.analytics-progress-bar.complete {
+  width: 100%;
+}
+
 .analytics-dataset-list {
   display: grid;
   gap: 10px;
@@ -1336,6 +1384,18 @@ button {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes analyticsProgress {
+  0% {
+    transform: translateX(-120%);
+  }
+  50% {
+    transform: translateX(40%);
+  }
+  100% {
+    transform: translateX(220%);
   }
 }
 
