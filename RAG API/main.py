@@ -89,6 +89,7 @@ warnings.filterwarnings('ignore')
 LOGGER = logging.getLogger(__name__)
 MAX_QUERY_LENGTH = 2000
 INDEX_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{2,63}$")
+prefix1 = "SFRAG"
 CHAT_IMAGE_TYPES = {
     "image/png",
     "image/jpeg",
@@ -99,6 +100,18 @@ MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
 THREAD_TABLE_NAME = os.getenv("DYNAMODB_THREAD_TABLE", "rag_chat_threads")
 thread_store = DynamoDBThreadStore(table_name=THREAD_TABLE_NAME, region_name=os.getenv("AWS_REGION", "ap-south-1"))
 TEMP_ROOT = Path(tempfile.gettempdir()) / "rag_serverless"
+BASIC_AUTH_USERS = {
+    "HTC_admin": {"password": "admin123", "role": "admin"},
+    "HTC_user": {"password": "user123", "role": "user"},
+}
+PUBLIC_PATHS = {
+    "/health",
+    f"/{prefix1}/auth/login",
+    f"/{prefix1}/docs/",
+    f"/{prefix1}/docs",
+    f"/{prefix1}/docs/openapi.json",
+    f"/{prefix1}/docs/redoc",
+}
 
 
 def _ensure_temp_dir(*parts: str) -> Path:
@@ -106,15 +119,48 @@ def _ensure_temp_dir(*parts: str) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
 
- 
-prefix1 = "SFRAG"
- 
 app = FastAPI(
     title="Insura-RAG(HTCNXT)",
     openapi_url=f"/{prefix1}/docs/openapi.json",
     docs_url=f"/{prefix1}/docs/",
     redoc_url=f"/{prefix1}/docs/redoc",
 )
+
+
+def _authenticate_request(request: Request) -> tuple[str, str] | None:
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Basic "):
+        return None
+    try:
+        decoded = base64.b64decode(authorization.split(" ", 1)[1]).decode("utf-8")
+        username, password = decoded.split(":", 1)
+    except Exception:
+        return None
+    record = BASIC_AUTH_USERS.get(username)
+    if not record or record.get("password") != password:
+        return None
+    return username, str(record.get("role", "user"))
+
+
+@app.middleware("http")
+async def basic_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path in PUBLIC_PATHS or path.startswith(f"/{prefix1}/docs"):
+        return await call_next(request)
+    if not path.startswith(f"/{prefix1}"):
+        return await call_next(request)
+
+    authenticated = _authenticate_request(request)
+    if not authenticated:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Unauthorized"},
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    username, role = authenticated
+    request.state.auth_user = username
+    request.state.auth_role = role
+    return await call_next(request)
 
 
 STORAGE_ACCOUNT_NAME = os.getenv("STORAGE_ACCOUNT_NAME")
@@ -179,6 +225,20 @@ def _clear_thread_history(thread_id: str) -> None:
     if session_id:
         build_chat_history(session_id).clear()
     thread_store.delete_thread(thread_id)
+
+
+def _request_identity(request: Request | None) -> tuple[str, str]:
+    if request is None:
+        return "demo", "demo"
+    return (
+        getattr(request.state, "auth_user", "demo"),
+        getattr(request.state, "auth_user", "demo"),
+    )
+
+
+def _require_admin(request: Request) -> None:
+    if getattr(request.state, "auth_role", "user") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
 
 
 def _detect_requested_category(index_name: str, query: str, selected_category: str | None) -> str | None:
@@ -277,6 +337,11 @@ class FeedbackRequest(BaseModel):
     user_id: str
     workspace_id: str
     feedback: str
+
+
+class BasicLoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 class AnalyticsQueryRequest(BaseModel):
@@ -854,6 +919,17 @@ async def metrics():
     return get_metrics_collector().snapshot()
 
 
+@app.post("/SFRAG/auth/login")
+async def basic_login(request: BasicLoginRequest):
+    record = BASIC_AUTH_USERS.get((request.username or "").strip())
+    if not record or record.get("password") != (request.password or ""):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    return {
+        "username": request.username.strip(),
+        "role": str(record.get("role", "user")),
+    }
+
+
 @app.get("/SFRAG/threads")
 async def list_threads(limit: int = 50, workspace_id: str | None = None):
     normalized_workspace = _validate_index_name(workspace_id) if workspace_id else None
@@ -875,18 +951,19 @@ async def get_thread(thread_id: str, workspace_id: str | None = None):
 
 
 @app.post("/SFRAG/threads")
-async def create_thread(request: ThreadCreateRequest):
-    workspace_id = _validate_index_name(request.workspace_id)
+async def create_thread(payload: ThreadCreateRequest, request: Request):
+    workspace_id = _validate_index_name(payload.workspace_id)
+    auth_user, auth_identifier = _request_identity(request)
     thread_id = str(uuid.uuid4())
     session_id = uuid.uuid4().hex
     thread_store.ensure_thread(
         thread_id=thread_id,
-        user_id=request.user_id,
-        user_identifier=request.user_identifier,
-        name=request.name or "New chat",
+        user_id=auth_user,
+        user_identifier=auth_identifier,
+        name=payload.name or "New chat",
         metadata={"session_id": session_id, "workspace_id": workspace_id, "index_name": workspace_id},
     )
-    return {"thread_id": thread_id, "session_id": session_id, "name": request.name or "New chat"}
+    return {"thread_id": thread_id, "session_id": session_id, "name": payload.name or "New chat"}
 
 
 @app.delete("/SFRAG/threads/{thread_id}")
@@ -944,6 +1021,53 @@ async def delete_workspace(workspace_id: str):
         "status": "deleted",
         "workspace_id": normalized_workspace,
         "threads_deleted": len(threads),
+    }
+
+
+@app.post("/SFRAG/admin/reset-demo")
+async def reset_demo_environment(request: Request):
+    _require_admin(request)
+    preserved_indexes = {"snow_idx"}
+    preserved_datasets = {"snow_analytics_demo"}
+
+    all_threads = thread_store.list_all_threads(limit=5000)
+    deleted_threads = 0
+    for thread in all_threads:
+        thread_id = thread.get("id")
+        if not thread_id:
+            continue
+        _clear_thread_history(thread_id)
+        deleted_threads += 1
+
+    deleted_indexes: list[str] = []
+    for index_name in get_document_category_store().list_index_names():
+        normalized_index = _validate_index_name(index_name)
+        if normalized_index in preserved_indexes:
+            continue
+        for document in get_document_category_store().list_documents(normalized_index):
+            filename = document.get("filename")
+            if not filename:
+                continue
+            delete_documents_by_filename(normalized_index, filename)
+            get_document_category_store().delete_document(normalized_index, filename)
+        deleted_indexes.append(normalized_index)
+
+    analytics_store = get_analytics_store()
+    deleted_datasets: list[str] = []
+    for dataset in analytics_store.list_datasets():
+        dataset_id = str(dataset.get("dataset_id", "")).strip()
+        if not dataset_id or dataset_id in preserved_datasets:
+            continue
+        analytics_store.delete_dataset(dataset_id)
+        deleted_datasets.append(dataset_id)
+
+    return {
+        "status": "reset",
+        "preserved_indexes": sorted(preserved_indexes),
+        "preserved_datasets": sorted(preserved_datasets),
+        "deleted_threads": deleted_threads,
+        "deleted_indexes": deleted_indexes,
+        "deleted_datasets": deleted_datasets,
     }
 
 
@@ -1022,6 +1146,7 @@ async def submit_feedback(request: FeedbackRequest):
 @app.post("/SFRAG/retrieval")
 async def multi_modal_query(query_request: QueryRequest, request: Request):
     query_request.index_name = _validate_index_name(query_request.index_name)
+    auth_user, auth_identifier = _request_identity(request)
     time_of_query = datetime.now()
     start_time = time.time()
     if len(query_request.user_query) > MAX_QUERY_LENGTH:
@@ -1033,8 +1158,8 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
     if query_request.thread_id:
         thread_store.ensure_thread(
             thread_id=query_request.thread_id,
-            user_id="demo",
-            user_identifier="demo",
+            user_id=auth_user,
+            user_identifier=auth_identifier,
             name=(query_request.user_query or "New chat")[:80],
             metadata={
                 "session_id": query_request.session_id,
@@ -1058,16 +1183,16 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
                 thread_id=query_request.thread_id,
                 role="user",
                 content=query_request.user_query,
-                user_id="demo",
-                user_identifier="demo",
+                user_id=auth_user,
+                user_identifier=auth_identifier,
                 thread_name=(query_request.user_query or "New chat")[:80],
             )
             thread_store.save_message(
                 thread_id=query_request.thread_id,
                 role="assistant",
                 content=direct_intent_answer,
-                user_id="demo",
-                user_identifier="demo",
+                user_id=auth_user,
+                user_identifier=auth_identifier,
                 thread_name=(query_request.user_query or "New chat")[:80],
             )
         return JSONResponse(content=full_response)
@@ -1114,16 +1239,16 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
                 thread_id=query_request.thread_id,
                 role="user",
                 content=query_request.user_query,
-                user_id="demo",
-                user_identifier="demo",
+                user_id=auth_user,
+                user_identifier=auth_identifier,
                 thread_name=(query_request.user_query or "New chat")[:80],
             )
             thread_store.save_message(
                 thread_id=query_request.thread_id,
                 role="assistant",
                 content=ticket_analytics_answer,
-                user_id="demo",
-                user_identifier="demo",
+                user_id=auth_user,
+                user_identifier=auth_identifier,
                 thread_name=(query_request.user_query or "New chat")[:80],
             )
         return JSONResponse(content=direct_response)
@@ -1161,16 +1286,16 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
                 thread_id=query_request.thread_id,
                 role="user",
                 content=query_request.user_query,
-                user_id="demo",
-                user_identifier="demo",
+                user_id=auth_user,
+                user_identifier=auth_identifier,
                 thread_name=(query_request.user_query or "New chat")[:80],
             )
             thread_store.save_message(
                 thread_id=query_request.thread_id,
                 role="assistant",
                 content="I found multiple document categories for this question. Which category should I use?",
-                user_id="demo",
-                user_identifier="demo",
+                user_id=auth_user,
+                user_identifier=auth_identifier,
                 thread_name=(query_request.user_query or "New chat")[:80],
             )
         clarification = disambiguation
@@ -1284,16 +1409,16 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
                 thread_id=query_request.thread_id,
                 role="user",
                 content=query_request.user_query,
-                user_id="demo",
-                user_identifier="demo",
+                user_id=auth_user,
+                user_identifier=auth_identifier,
                 thread_name=(query_request.user_query or "New chat")[:80],
             )
             thread_store.save_message(
                 thread_id=query_request.thread_id,
                 role="assistant",
                 content=response_body.strip(),
-                user_id="demo",
-                user_identifier="demo",
+                user_id=auth_user,
+                user_identifier=auth_identifier,
                 thread_name=(query_request.user_query or "New chat")[:80],
             )
         if cache_manager and cache_key:
@@ -1408,6 +1533,7 @@ def ingest_tickets(index_name: str = Form(...), file: UploadFile = File(...)):
 
 @app.post("/SFRAG/retrieval-image")
 async def retrieval_from_image(
+    request: Request,
     index_name: str = Form(...),
     session_id: str = Form(...),
     thread_id: str | None = Form(None),
@@ -1427,8 +1553,6 @@ async def retrieval_from_image(
     if not query_text:
         raise HTTPException(status_code=400, detail="Could not determine a usable question from the image.")
 
-    request_scope = {"type": "http", "method": "POST", "headers": []}
-    synthetic_request = Request(request_scope)
     response = await multi_modal_query(
         QueryRequest(
             user_query=query_text,
@@ -1436,7 +1560,7 @@ async def retrieval_from_image(
             session_id=session_id,
             thread_id=thread_id,
         ),
-        synthetic_request,
+        request,
     )
 
     if isinstance(response, JSONResponse):
@@ -1541,6 +1665,13 @@ async def query_analytics(request: AnalyticsQueryRequest):
         raise HTTPException(status_code=404, detail="Analytics dataset not found")
 
     classification = classify_query_route(request.question, schema)
+    route = classification["route"]
+    if route == "knowledge":
+        route = "hybrid"
+        classification = {
+            "route": route,
+            "reason": f"{classification['reason']}_structured_hybrid",
+        }
     table_name = analytics_store.get_table_name(dataset_id)
     cached_bundle = analytics_store.load_metrics_cache(dataset_id) or {}
     cached_metric = _match_cached_metric(request.question, cached_bundle.get("metrics", []))
@@ -1567,7 +1698,7 @@ async def query_analytics(request: AnalyticsQueryRequest):
     explanation = None
     context_rows: list[dict[str, Any]] = []
 
-    if classification["route"] == "hybrid":
+    if route == "hybrid":
         try:
             context_sql = build_context_sql(
                 request.question,

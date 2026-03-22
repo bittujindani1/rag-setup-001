@@ -68,20 +68,34 @@ type AnalyticsSidebarState = {
 }
 
 type AnalyticsHistoryEntry = {
+  id: string
   datasetId: string
   question: string
   timestamp: number
+  response?: AnalyticsQueryResponse | null
 }
 
 const CHART_COLORS = ['#0f766e', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6']
 const CHART_OPTIONS = ['number', 'bar', 'pie', 'line', 'table'] as const
 type ChartOption = (typeof CHART_OPTIONS)[number]
 const ANALYTICS_HISTORY_KEY = 'rag-analytics-history'
+const AUTH_SESSION_KEY = 'rag-demo-auth-session'
 
 async function apiFetch<T>(apiBaseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
+  }
+  const rawSession = localStorage.getItem(AUTH_SESSION_KEY)
+  if (rawSession && !headers.has('Authorization')) {
+    try {
+      const session = JSON.parse(rawSession) as { authorization?: string }
+      if (session.authorization) {
+        headers.set('Authorization', session.authorization)
+      }
+    } catch {
+      localStorage.removeItem(AUTH_SESSION_KEY)
+    }
   }
   const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers })
   if (!response.ok) {
@@ -288,6 +302,7 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
   const [answerChartOverride, setAnswerChartOverride] = useState<ChartOption | null>(null)
   const [showSql, setShowSql] = useState(false)
   const [recentQueries, setRecentQueries] = useState<AnalyticsHistoryEntry[]>([])
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [showUploadWarning, setShowUploadWarning] = useState(false)
   const [uploadStatusMessage, setUploadStatusMessage] = useState('')
@@ -296,6 +311,11 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     () => datasets.find((dataset) => dataset.dataset_id === selectedDataset) ?? null,
     [datasets, selectedDataset],
   )
+
+  function persistRecentQueries(entries: AnalyticsHistoryEntry[]) {
+    localStorage.setItem(ANALYTICS_HISTORY_KEY, JSON.stringify(entries))
+    setRecentQueries(entries)
+  }
 
   async function loadDatasets(selectDataset?: string) {
     const response = await apiFetch<{ datasets: AnalyticsDataset[] }>(apiBaseUrl, '/SFRAG/analytics/datasets')
@@ -339,7 +359,18 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     try {
       const raw = localStorage.getItem(ANALYTICS_HISTORY_KEY)
       if (raw) {
-        setRecentQueries(JSON.parse(raw) as AnalyticsHistoryEntry[])
+        const parsed = JSON.parse(raw) as Array<Partial<AnalyticsHistoryEntry>>
+        setRecentQueries(
+          parsed
+            .filter((entry) => entry.datasetId && entry.question && entry.timestamp)
+            .map((entry, index) => ({
+              id: entry.id || `${entry.datasetId}-${entry.timestamp}-${index}`,
+              datasetId: String(entry.datasetId),
+              question: String(entry.question),
+              timestamp: Number(entry.timestamp),
+              response: entry.response ?? null,
+            })),
+        )
       }
     } catch {
       setRecentQueries([])
@@ -497,9 +528,11 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       setAnswerChartOverride(null)
       setShowSql(false)
       const entry: AnalyticsHistoryEntry = {
+        id: crypto.randomUUID(),
         datasetId: selectedDataset,
         question: analyticsQuestion.trim(),
         timestamp: Date.now(),
+        response,
       }
       setRecentQueries((current) => {
         const next = [entry, ...current.filter((item) => !(item.datasetId === entry.datasetId && item.question === entry.question))].slice(0, 5)
@@ -509,6 +542,38 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       pushToast('Analytics query executed.', 'success')
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Analytics query failed.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleHistoryEntryClick(entry: AnalyticsHistoryEntry) {
+    setSelectedDataset(entry.datasetId)
+    setAnalyticsQuestion(entry.question)
+    setExpandedHistoryId((current) => (current === entry.id ? null : entry.id))
+    if (entry.response) {
+      setAnalyticsAnswer(entry.response)
+      setAnswerChartOverride(null)
+      setShowSql(false)
+      return
+    }
+    try {
+      setBusy(true)
+      const response = await apiFetch<AnalyticsQueryResponse>(apiBaseUrl, '/SFRAG/analytics/query', {
+        method: 'POST',
+        body: JSON.stringify({
+          dataset_id: entry.datasetId,
+          question: entry.question,
+        }),
+      })
+      setAnalyticsAnswer(response)
+      setAnswerChartOverride(null)
+      setShowSql(false)
+      const nextEntries = recentQueries.map((item) => (item.id === entry.id ? { ...item, response } : item))
+      persistRecentQueries(nextEntries)
+      pushToast('Loaded the saved analytics result.', 'success')
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Could not load this analytics result.', 'error')
     } finally {
       setBusy(false)
     }
@@ -763,19 +828,26 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
             <div className="analytics-history-list">
               {recentQueries.length === 0 ? <p className="analytics-empty">Recent analytics questions will appear here.</p> : null}
               {recentQueries.map((entry, index) => (
-                <button
+                <div
                   key={`${entry.datasetId}-${entry.question}-${index}`}
-                  type="button"
                   className="analytics-history-item"
-                  onClick={() => {
-                    setSelectedDataset(entry.datasetId)
-                    setAnalyticsQuestion(entry.question)
-                  }}
                 >
-                  <strong>{entry.question}</strong>
-                  <span>{entry.datasetId}</span>
-                  <small>{new Date(entry.timestamp).toLocaleString()}</small>
-                </button>
+                  <button
+                    type="button"
+                    className="analytics-history-main"
+                    onClick={() => void handleHistoryEntryClick(entry)}
+                  >
+                    <strong>{entry.question}</strong>
+                    <span>{entry.datasetId}</span>
+                    <small>{new Date(entry.timestamp).toLocaleString()}</small>
+                  </button>
+                  {expandedHistoryId === entry.id ? (
+                    <div className="analytics-history-result">
+                      <p>{entry.response?.answer ?? 'Loading saved analytics result...'}</p>
+                      {entry.response?.grounded_explanation ? <small>{entry.response.grounded_explanation}</small> : null}
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </div>
           </section>

@@ -269,6 +269,36 @@ class DynamoDBThreadStore:
         filtered.sort(key=lambda thread: thread["createdAt"], reverse=True)
         return filtered[:limit]
 
+    def list_all_threads(self, *, limit: int = 1000) -> List[ThreadDict]:
+        items: List[Dict[str, Any]] = []
+        response = self.table.scan(
+            FilterExpression=Attr("record_type").eq("thread"),
+        )
+        items.extend(response.get("Items", []))
+        while response.get("LastEvaluatedKey") and len(items) < limit:
+            response = self.table.scan(
+                FilterExpression=Attr("record_type").eq("thread"),
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            items.extend(response.get("Items", []))
+        threads: List[ThreadDict] = []
+        for item in items[:limit]:
+            threads.append(
+                ThreadDict(
+                    id=item["id"],
+                    createdAt=item["createdAt"],
+                    name=item.get("name"),
+                    userId=item.get("userId"),
+                    userIdentifier=item.get("userIdentifier"),
+                    tags=item.get("tags"),
+                    metadata=item.get("metadata"),
+                    steps=[],
+                    elements=[],
+                )
+            )
+        threads.sort(key=lambda thread: thread["createdAt"], reverse=True)
+        return threads
+
     def delete_thread(self, thread_id: str) -> None:
         response = self.table.query(KeyConditionExpression=Key("thread_id").eq(thread_id))
         with self.table.batch_writer() as batch:

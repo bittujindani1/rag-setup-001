@@ -144,6 +144,22 @@ class DynamoDBDocumentCategoryStore:
             for category, count in sorted(category_counts.items(), key=lambda item: item[0])
         ]
 
+    def list_index_names(self) -> List[str]:
+        items: List[Dict] = []
+        scan_kwargs = {"ProjectionExpression": "index_name"}
+        response = self.table.scan(**scan_kwargs)
+        items.extend(response.get("Items", []))
+        while response.get("LastEvaluatedKey"):
+            response = self.table.scan(ExclusiveStartKey=response["LastEvaluatedKey"], **scan_kwargs)
+            items.extend(response.get("Items", []))
+        return sorted(
+            {
+                str(item.get("index_name", "")).strip()
+                for item in items
+                if str(item.get("index_name", "")).strip()
+            }
+        )
+
 
 class DynamoDBIngestJobStore:
     def __init__(self, table_name: str, region_name: str) -> None:

@@ -105,6 +105,12 @@ type AnalyticsDatasetSidebarRecord = {
   schema_columns?: string[]
 }
 
+type AuthSession = {
+  username: string
+  role: 'admin' | 'user'
+  authorization: string
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '')
 const DEFAULT_INDEX = import.meta.env.VITE_INDEX_NAME ?? 'statefarm_rag'
 const SHARED_WORKSPACE = import.meta.env.VITE_SHARED_INDEX_NAME ?? 'demo-shared'
@@ -114,6 +120,8 @@ const PERSONAL_WORKSPACES_KEY = 'rag-demo-personal-workspaces'
 const ACTIVE_WORKSPACE_KEY = 'rag-demo-active-workspace'
 const FEEDBACK_USER_KEY = 'rag-demo-feedback-user'
 const THEME_KEY = 'rag-demo-theme'
+const AUTH_SESSION_KEY = 'rag-demo-auth-session'
+const ANALYTICS_HISTORY_KEY = 'rag-analytics-history'
 
 function normalizeWorkspace(value: string): string {
   const normalized = value
@@ -145,6 +153,17 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
+  }
+  const rawSession = localStorage.getItem(AUTH_SESSION_KEY)
+  if (rawSession && !headers.has('Authorization')) {
+    try {
+      const session = JSON.parse(rawSession) as AuthSession
+      if (session.authorization) {
+        headers.set('Authorization', session.authorization)
+      }
+    } catch {
+      localStorage.removeItem(AUTH_SESSION_KEY)
+    }
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -180,6 +199,10 @@ function formatTimestamp(value: string): string {
 }
 
 function App() {
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null)
+  const [loginUsername, setLoginUsername] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
   const [appView, setAppView] = useState<'chat' | 'analytics'>('chat')
   const [personalWorkspace, setPersonalWorkspace] = useState(DEFAULT_INDEX)
   const [personalWorkspaceHistory, setPersonalWorkspaceHistory] = useState<string[]>([])
@@ -251,6 +274,7 @@ function App() {
     )
   }, [analyticsDatasetFilter, analyticsDatasets])
   const logoSrc = theme === 'dark' ? '/logo_dark.PNG' : '/logo_light.PNG'
+  const isAdmin = authSession?.role === 'admin'
 
   function pushToast(message: string, tone: Toast['tone']) {
     const id = crypto.randomUUID()
@@ -420,6 +444,17 @@ function App() {
       chatLogRef.current.scrollTo({ top: chatLogRef.current.scrollHeight, behavior: 'smooth' })
     }
   }, [orderedMessages])
+
+  useEffect(() => {
+    const rawSession = localStorage.getItem(AUTH_SESSION_KEY)
+    if (rawSession) {
+      try {
+        setAuthSession(JSON.parse(rawSession) as AuthSession)
+      } catch {
+        localStorage.removeItem(AUTH_SESSION_KEY)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const handleAnalyticsSidebarState = (event: Event) => {
@@ -695,15 +730,120 @@ function App() {
     void refreshUploadPolicy(indexName)
   }, [indexName])
 
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    try {
+      setBusy(true)
+      setLoginError('')
+      const response = await fetch(`${API_BASE_URL}/SFRAG/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginUsername, password: loginPassword }),
+      })
+      if (!response.ok) {
+        throw new Error((await response.text()) || 'Login failed.')
+      }
+      const payload = (await response.json()) as { username: string; role: 'admin' | 'user' }
+      const authorization = `Basic ${btoa(`${loginUsername}:${loginPassword}`)}`
+      const session: AuthSession = { username: payload.username, role: payload.role, authorization }
+      localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session))
+      setAuthSession(session)
+      setLoginPassword('')
+      pushToast(`Signed in as ${payload.username}.`, 'success')
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Login failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function handleLogout() {
+    localStorage.removeItem(AUTH_SESSION_KEY)
+    setAuthSession(null)
+    setLoginUsername('')
+    setLoginPassword('')
+    setLoginError('')
+  }
+
+  async function handleAdminReset() {
+    const confirmed = window.confirm('Reset the demo? This deletes all chat history, workspaces, datasets, and indexes except ServiceNow snow.')
+    if (!confirmed) return
+    try {
+      setBusy(true)
+      const response = await apiFetch<{ status: string }>(`/SFRAG/admin/reset-demo`, { method: 'POST' })
+      localStorage.removeItem(PERSONAL_WORKSPACE_KEY)
+      localStorage.removeItem(PERSONAL_WORKSPACES_KEY)
+      localStorage.removeItem(ACTIVE_WORKSPACE_KEY)
+      localStorage.removeItem(ANALYTICS_HISTORY_KEY)
+      setPersonalWorkspace(DEFAULT_INDEX)
+      setWorkspaceDraft(DEFAULT_INDEX)
+      setPersonalWorkspaceHistory([])
+      setAnalyticsDatasets([])
+      setAnalyticsSelectedDataset('')
+      setAnalyticsSelectedDatasetMeta(null)
+      setAnalyticsDatasetFilter('')
+      setActiveWorkspace('snow')
+      setAppView('chat')
+      resetWorkspaceState()
+      pushToast(response.status === 'reset_complete' ? 'Demo reset completed.' : 'Demo reset requested.', 'success')
+      await refreshThreads(SNOW_WORKSPACE)
+      await refreshDocuments(SNOW_WORKSPACE)
+      await refreshUploadPolicy(SNOW_WORKSPACE)
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Admin reset failed.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!authSession) {
+    return (
+      <div className="auth-shell">
+        <form className="auth-card" onSubmit={handleLogin}>
+          <img className="brand-logo auth-logo" src={logoSrc} alt="RAG demo logo" />
+          <p className="eyebrow">Secure Access</p>
+          <h1>RAG Demo Login</h1>
+          <p className="helper-text">Use one of the approved demo credentials to access chat and analytics.</p>
+          <label className="field">
+            <span>Username</span>
+            <input value={loginUsername} onChange={(event) => setLoginUsername(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} />
+          </label>
+          {loginError ? <p className="auth-error">{loginError}</p> : null}
+          <button className="primary-button auth-submit" type="submit" disabled={busy || !loginUsername || !loginPassword}>
+            {busy ? 'Signing in...' : 'Sign in'}
+          </button>
+          <div className="auth-hints">
+            <small>`HTC_admin / admin123`</small>
+            <small>`HTC_user / user123`</small>
+          </div>
+        </form>
+      </div>
+    )
+  }
+
   return (
     <div className="shell">
       <aside className="sidebar">
         <div className="panel brand-panel">
           <div className="brand-row">
             <img className="brand-logo" src={logoSrc} alt="RAG demo logo" />
-            <button className="ghost-button theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
-              {theme === 'light' ? 'Dark mode' : 'Light mode'}
-            </button>
+            <div className="brand-actions">
+              {isAdmin ? (
+                <button className="ghost-button danger-toggle" onClick={() => void handleAdminReset()}>
+                  Reset demo
+                </button>
+              ) : null}
+              <button className="ghost-button theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
+                {theme === 'light' ? 'Dark mode' : 'Light mode'}
+              </button>
+              <button className="ghost-button theme-toggle" onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
           </div>
           <div className="panel-head">
             <div>
