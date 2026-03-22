@@ -84,6 +84,7 @@ button {
   border-right: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.5);
   backdrop-filter: blur(12px);
+  overflow-x: hidden;
 }
 
 :root[data-theme='dark'] .sidebar {
@@ -146,18 +147,29 @@ button {
 
 .brand-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   gap: 12px;
   margin-bottom: 8px;
 }
 
 .brand-actions {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  width: 100%;
+}
+
+.brand-actions .ghost-button {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.brand-actions .danger-toggle {
+  grid-column: 1 / -1;
 }
 
 .brand-logo {
@@ -165,6 +177,7 @@ button {
   width: auto;
   object-fit: contain;
   filter: drop-shadow(0 10px 18px rgba(15, 118, 110, 0.16));
+  align-self: flex-start;
 }
 
 .theme-toggle {
@@ -358,12 +371,22 @@ button {
   border-radius: 14px;
   padding: 10px 12px;
   cursor: pointer;
+  min-width: 0;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .workspace-tab.active {
   background: var(--accent-soft);
   color: var(--accent-strong);
   border-color: rgba(15, 118, 110, 0.24);
+}
+
+.app-view-tabs .workspace-tab,
+.workspace-switcher .workspace-tab {
+  padding: 10px 8px;
+  font-size: 0.92rem;
 }
 
 .current-thread-badge,
