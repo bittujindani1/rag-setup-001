@@ -80,6 +80,38 @@ def generate_sql_for_question(question: str, *, dataset_id: str, table_name: str
     lowered = (question or "").strip().lower()
     columns = {str(item.get("name", "")).lower(): item for item in schema_profile.get("columns", [])}
 
+    if "identity" in lowered and any(term in lowered for term in ("common", "issue", "issues", "problem", "patterns")):
+        return (
+            f'SELECT "summary" AS label, COUNT(*) AS value '
+            f'FROM "{table_name}" WHERE dataset_id = \'{dataset_id}\' AND "category" = \'identity\' '
+            f'GROUP BY 1 ORDER BY 2 DESC, 1 ASC LIMIT 25',
+            "bar",
+        )
+
+    if "assignment group" in lowered and any(term in lowered for term in ("most", "top", "handled")):
+        return (
+            f'SELECT "assignment_group" AS label, COUNT(*) AS value '
+            f'FROM "{table_name}" WHERE dataset_id = \'{dataset_id}\' '
+            f'GROUP BY 1 ORDER BY 2 DESC, 1 ASC LIMIT 25',
+            "bar",
+        )
+
+    if "categor" in lowered and any(term in lowered for term in ("all", "show", "list", "most", "top", "incident")):
+        return (
+            f'SELECT "category" AS label, COUNT(*) AS value '
+            f'FROM "{table_name}" WHERE dataset_id = \'{dataset_id}\' '
+            f'GROUP BY 1 ORDER BY 2 DESC, 1 ASC LIMIT 25',
+            "bar",
+        )
+
+    if "summar" in lowered and any(term in lowered for term in ("top", "recurring", "common", "most")):
+        return (
+            f'SELECT "summary" AS label, COUNT(*) AS value '
+            f'FROM "{table_name}" WHERE dataset_id = \'{dataset_id}\' '
+            f'GROUP BY 1 ORDER BY 2 DESC, 1 ASC LIMIT 25',
+            "bar",
+        )
+
     if "how many" in lowered or ("count" in lowered and "by" not in lowered):
         filters = _extract_filters(question, dataset_id=dataset_id, schema_profile=schema_profile)
         where_clause = " AND ".join(dict.fromkeys(filters))
