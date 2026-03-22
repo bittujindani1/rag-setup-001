@@ -60,6 +60,8 @@ type AnalyticsTabProps = {
 }
 
 const CHART_COLORS = ['#0f766e', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6']
+const CHART_OPTIONS = ['number', 'bar', 'pie', 'line', 'table'] as const
+type ChartOption = (typeof CHART_OPTIONS)[number]
 
 async function apiFetch<T>(apiBaseUrl: string, path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
@@ -78,11 +80,61 @@ function formatRelativeTime(value?: number): string {
   return new Date(value * 1000).toLocaleString()
 }
 
+function formatMetricLabel(value: string): string {
+  return value.replace(/^top_/, 'Top ').replace(/_/g, ' ')
+}
+
+function formatMetricValue(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return 'No data'
+  if (typeof value === 'number') return value.toLocaleString()
+  const numeric = Number(value)
+  if (!Number.isNaN(numeric) && String(value).trim() !== '') {
+    return numeric.toLocaleString()
+  }
+  return String(value)
+}
+
+function formatSummaryCardValue(value: unknown): { primary: string; secondary?: string } {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    const label = record.label ?? record.value ?? record.name
+    const count = record.count ?? record.total ?? record.rows
+    if (label !== undefined) {
+      return {
+        primary: formatMetricValue(
+          typeof label === 'string' || typeof label === 'number' || label === null ? label : String(label),
+        ),
+        secondary:
+          count !== undefined
+            ? `${formatMetricValue(typeof count === 'string' || typeof count === 'number' || count === null ? count : String(count))} records`
+            : undefined,
+      }
+    }
+  }
+  return { primary: formatMetricValue(value as string | number | null | undefined) }
+}
+
+function inferChartType(chartType: string, rows: Array<Record<string, string | number | null>>): ChartOption {
+  if (!rows.length) return 'table'
+  if (chartType === 'number' || (rows.length === 1 && Object.keys(rows[0] ?? {}).length === 1)) return 'number'
+  if (chartType === 'line') return 'line'
+  if (chartType === 'pie') return 'pie'
+  if (chartType === 'table') return 'table'
+  return rows.length <= 6 ? 'pie' : 'bar'
+}
+
+function availableChartOptions(rows: Array<Record<string, string | number | null>>, baseType: string): ChartOption[] {
+  const inferred = inferChartType(baseType, rows)
+  if (inferred === 'number') return ['number']
+  if (inferred === 'line') return ['line', 'bar', 'table']
+  return rows.length <= 6 ? ['pie', 'bar', 'table'] : ['bar', 'table']
+}
+
 function AnalyticsChart({
   chartType,
   rows,
 }: {
-  chartType: string
+  chartType: ChartOption
   rows: Array<Record<string, string | number | null>>
 }) {
   const normalizedRows = useMemo(
@@ -101,6 +153,43 @@ function AnalyticsChart({
 
   if (!rows.length) {
     return <p className="analytics-empty">No chartable rows returned.</p>
+  }
+
+  if (chartType === 'number') {
+    const firstRow = rows[0] ?? {}
+    const firstKey = Object.keys(firstRow)[0] ?? 'value'
+    return (
+      <div className="analytics-number-card">
+        <strong>{formatMetricValue(firstRow[firstKey] as string | number | null | undefined)}</strong>
+        <span>{formatMetricLabel(firstKey)}</span>
+      </div>
+    )
+  }
+
+  if (chartType === 'table') {
+    const columns = Object.keys(rows[0] ?? {})
+    return (
+      <div className="analytics-table-wrap compact">
+        <table>
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={`${index}-${columns.join('-')}`}>
+                {columns.map((column) => (
+                  <td key={column}>{formatMetricValue(row[column] as string | number | null | undefined)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
   }
 
   if (chartType === 'line') {
@@ -156,6 +245,8 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
   const [metricResults, setMetricResults] = useState<Record<string, AnalyticsQueryResponse>>({})
   const [analyticsQuestion, setAnalyticsQuestion] = useState('')
   const [analyticsAnswer, setAnalyticsAnswer] = useState<AnalyticsQueryResponse | null>(null)
+  const [metricChartOverrides, setMetricChartOverrides] = useState<Record<string, ChartOption>>({})
+  const [answerChartOverride, setAnswerChartOverride] = useState<ChartOption | null>(null)
   const [busy, setBusy] = useState(false)
 
   async function loadDatasets(selectDataset?: string) {
@@ -242,6 +333,7 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
         }),
       })
       setAnalyticsAnswer(response)
+      setAnswerChartOverride(null)
       pushToast('Analytics query executed.', 'success')
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Analytics query failed.', 'error')
@@ -295,17 +387,25 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
 
         <div className="analytics-main">
           <div className="analytics-card-grid">
-            {summaryCards.map(([key, value]) => (
-              <article key={key} className="analytics-kpi-card">
-                <span>{key.replace(/_/g, ' ')}</span>
-                <strong>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</strong>
-              </article>
-            ))}
+            {summaryCards.map(([key, value]) => {
+              const display = formatSummaryCardValue(value)
+              return (
+                <article key={key} className="analytics-kpi-card">
+                  <span>{formatMetricLabel(key)}</span>
+                  <strong>{display.primary}</strong>
+                  {display.secondary ? <small>{display.secondary}</small> : null}
+                </article>
+              )
+            })}
           </div>
 
           <div className="analytics-visual-grid">
             {metrics.slice(0, 3).map((metric) => {
               const result = metricResults[metric.metric_id]
+              const metricChartOptions = result ? availableChartOptions(result.result.rows, result.chart_type) : []
+              const chartChoice = result
+                ? (metricChartOverrides[metric.metric_id] ?? inferChartType(result.chart_type, result.result.rows))
+                : null
               return (
                 <section key={metric.metric_id} className="analytics-visual-card">
                   <div className="panel-head tight">
@@ -313,12 +413,33 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
                       <h3>{metric.title}</h3>
                       <p className="helper-text">{metric.description}</p>
                     </div>
-                    <button type="button" className="ghost-button" onClick={() => selectedDataset && void runMetric(selectedDataset, metric)}>
-                      Refresh
-                    </button>
+                    <div className="analytics-card-actions">
+                      {result ? (
+                        <div className="chart-toggle">
+                          {metricChartOptions.map((option) => (
+                            <button
+                              key={`${metric.metric_id}-${option}`}
+                              type="button"
+                              className={chartChoice === option ? 'active' : ''}
+                              onClick={() =>
+                                setMetricChartOverrides((current) => ({
+                                  ...current,
+                                  [metric.metric_id]: option,
+                                }))
+                              }
+                            >
+                              {option}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      <button type="button" className="ghost-button" onClick={() => selectedDataset && void runMetric(selectedDataset, metric)}>
+                        Refresh
+                      </button>
+                    </div>
                   </div>
                   {result ? (
-                    <AnalyticsChart chartType={result.chart_type} rows={result.result.rows} />
+                    <AnalyticsChart chartType={chartChoice ?? 'table'} rows={result.result.rows} />
                   ) : (
                     <p className="analytics-empty">Run this metric to load the chart.</p>
                   )}
@@ -348,8 +469,27 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
             {analyticsAnswer ? (
               <div className="analytics-result-card">
                 <p className="analytics-answer">{analyticsAnswer.answer}</p>
+                <div className="analytics-result-topline">
+                  <span className="analytics-source-pill">{analyticsAnswer.source}</span>
+                  <span className="analytics-source-pill subtle">{analyticsAnswer.route}</span>
+                  <div className="chart-toggle">
+                    {availableChartOptions(analyticsAnswer.result.rows, analyticsAnswer.chart_type).map((option) => (
+                      <button
+                        key={`answer-${option}`}
+                        type="button"
+                        className={(answerChartOverride ?? inferChartType(analyticsAnswer.chart_type, analyticsAnswer.result.rows)) === option ? 'active' : ''}
+                        onClick={() => setAnswerChartOverride(option)}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="analytics-chart-frame">
-                  <AnalyticsChart chartType={analyticsAnswer.chart_type} rows={analyticsAnswer.result.rows} />
+                  <AnalyticsChart
+                    chartType={answerChartOverride ?? inferChartType(analyticsAnswer.chart_type, analyticsAnswer.result.rows)}
+                    rows={analyticsAnswer.result.rows}
+                  />
                 </div>
                 <div className="analytics-sql">
                   <span>Executed SQL</span>

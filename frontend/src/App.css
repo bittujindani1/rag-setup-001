@@ -944,6 +944,8 @@ button {
 .analytics-kpi-card {
   display: grid;
   gap: 8px;
+  align-content: start;
+  min-height: 112px;
 }
 
 .analytics-kpi-card span {
@@ -953,8 +955,13 @@ button {
 }
 
 .analytics-kpi-card strong {
-  font-size: 1.05rem;
-  line-height: 1.4;
+  font-size: 1.45rem;
+  line-height: 1.25;
+}
+
+.analytics-kpi-card small {
+  color: var(--muted);
+  font-size: 0.84rem;
 }
 
 .analytics-visual-grid {
@@ -981,8 +988,55 @@ button {
   margin-top: 16px;
 }
 
+.analytics-result-topline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.analytics-source-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.analytics-source-pill.subtle {
+  background: rgba(15, 118, 110, 0.08);
+}
+
 .analytics-chart-frame {
   min-height: 260px;
+}
+
+.analytics-number-card {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  gap: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(15, 118, 110, 0.03), rgba(15, 118, 110, 0.08));
+}
+
+.analytics-number-card strong {
+  font-size: 3rem;
+  line-height: 1;
+}
+
+.analytics-number-card span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.8rem;
 }
 
 .analytics-sql {
@@ -1011,6 +1065,11 @@ button {
   overflow-x: auto;
 }
 
+.analytics-table-wrap.compact {
+  max-height: 260px;
+  overflow: auto;
+}
+
 .analytics-table-wrap table {
   width: 100%;
   border-collapse: collapse;
@@ -1030,6 +1089,38 @@ button {
 .analytics-table-wrap th {
   background: var(--accent-mist);
   color: var(--accent-strong);
+}
+
+.analytics-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.chart-toggle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chart-toggle button {
+  border: 1px solid var(--line);
+  background: var(--paper-strong);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.chart-toggle button.active {
+  background: var(--accent);
+  color: white;
+  border-color: transparent;
 }
 
 .document-list {
