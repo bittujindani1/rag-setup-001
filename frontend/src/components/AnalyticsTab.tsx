@@ -51,6 +51,8 @@ type AnalyticsQueryResponse = {
   }
   chart_type: string
   answer: string
+  grounded_explanation?: string | null
+  grounded_rows?: Array<Record<string, string | number | null>>
   source: string
 }
 
@@ -128,6 +130,35 @@ function availableChartOptions(rows: Array<Record<string, string | number | null
   if (inferred === 'number') return ['number']
   if (inferred === 'line') return ['line', 'bar', 'table']
   return rows.length <= 6 ? ['pie', 'bar', 'table'] : ['bar', 'table']
+}
+
+function suggestedQuestions(datasetId: string): string[] {
+  if (datasetId.includes('snow')) {
+    return [
+      'Which assignment groups handled the most tickets?',
+      'Show ticket counts by category.',
+      'Which priorities appear most often and explain what is driving them?',
+    ]
+  }
+  if (datasetId.includes('cost')) {
+    return [
+      'Show monthly cost by service_name.',
+      'Which owner_team spends the most?',
+      'Which services cost the most and explain the likely optimization focus?',
+    ]
+  }
+  if (datasetId.includes('claims')) {
+    return [
+      'Show open_claims by region.',
+      'How is avg_cycle_days trending over time?',
+      'Which region has the highest backlog and explain what stands out?',
+    ]
+  }
+  return [
+    'How many rows are in this dataset?',
+    'Show the top categories in table format.',
+    'Explain what is driving the top segment.',
+  ]
 }
 
 function AnalyticsChart({
@@ -248,6 +279,10 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
   const [metricChartOverrides, setMetricChartOverrides] = useState<Record<string, ChartOption>>({})
   const [answerChartOverride, setAnswerChartOverride] = useState<ChartOption | null>(null)
   const [busy, setBusy] = useState(false)
+  const selectedDatasetMeta = useMemo(
+    () => datasets.find((dataset) => dataset.dataset_id === selectedDataset) ?? null,
+    [datasets, selectedDataset],
+  )
 
   async function loadDatasets(selectDataset?: string) {
     const response = await apiFetch<{ datasets: AnalyticsDataset[] }>(apiBaseUrl, '/SFRAG/analytics/datasets')
@@ -314,6 +349,8 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       pushToast(`Analytics dataset ${response.dataset_id} uploaded with ${response.row_count} rows.`, 'success')
       await loadDatasets(response.dataset_id)
       await hydrateDashboard(response.dataset_id)
+      setAnalyticsQuestion('')
+      setAnalyticsAnswer(null)
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Analytics upload failed.', 'error')
     } finally {
@@ -382,10 +419,38 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
                 </button>
               ))}
             </div>
+            {selectedDatasetMeta ? (
+              <div className="analytics-dataset-meta">
+                <h4>Selected dataset</h4>
+                <p>{selectedDatasetMeta.source_name ?? 'Structured upload'}</p>
+                <small>{selectedDatasetMeta.schema_columns?.length ?? 0} columns available for analytics.</small>
+              </div>
+            ) : null}
           </div>
         </aside>
 
         <div className="analytics-main">
+          <section className="analytics-hero-strip">
+            <div>
+              <h3>Analytics overview</h3>
+              <p className="helper-text">
+                Use KPI cards for the quick read, then switch charts or ask a natural-language question for deeper analysis.
+              </p>
+            </div>
+            <div className="analytics-query-suggestions">
+              {suggestedQuestions(selectedDataset).map((question) => (
+                <button
+                  key={question}
+                  type="button"
+                  className="chip"
+                  onClick={() => setAnalyticsQuestion(question)}
+                >
+                  {question}
+                </button>
+              ))}
+            </div>
+          </section>
+
           <div className="analytics-card-grid">
             {summaryCards.map(([key, value]) => {
               const display = formatSummaryCardValue(value)
@@ -400,7 +465,7 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
           </div>
 
           <div className="analytics-visual-grid">
-            {metrics.slice(0, 3).map((metric) => {
+            {metrics.slice(0, 4).map((metric) => {
               const result = metricResults[metric.metric_id]
               const metricChartOptions = result ? availableChartOptions(result.result.rows, result.chart_type) : []
               const chartChoice = result
@@ -469,6 +534,12 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
             {analyticsAnswer ? (
               <div className="analytics-result-card">
                 <p className="analytics-answer">{analyticsAnswer.answer}</p>
+                {analyticsAnswer.grounded_explanation ? (
+                  <div className="analytics-insight-card">
+                    <span>Grounded explanation</span>
+                    <p>{analyticsAnswer.grounded_explanation}</p>
+                  </div>
+                ) : null}
                 <div className="analytics-result-topline">
                   <span className="analytics-source-pill">{analyticsAnswer.source}</span>
                   <span className="analytics-source-pill subtle">{analyticsAnswer.route}</span>
@@ -515,6 +586,31 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
                     </tbody>
                   </table>
                 </div>
+                {analyticsAnswer.grounded_rows && analyticsAnswer.grounded_rows.length > 0 ? (
+                  <div className="analytics-grounded-list">
+                    <span>Supporting rows</span>
+                    <div className="analytics-table-wrap compact">
+                      <table>
+                        <thead>
+                          <tr>
+                            {Object.keys(analyticsAnswer.grounded_rows[0]).map((column) => (
+                              <th key={column}>{column}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {analyticsAnswer.grounded_rows.map((row, index) => (
+                            <tr key={`grounded-${index}`}>
+                              {Object.keys(analyticsAnswer.grounded_rows?.[0] ?? {}).map((column) => (
+                                <td key={column}>{formatMetricValue(row[column] as string | number | null | undefined)}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </section>

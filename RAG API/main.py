@@ -44,7 +44,7 @@ from document_support import (
     validate_ticket_upload,
     validate_upload,
 )
-from text_to_sql import generate_sql_for_question
+from text_to_sql import build_context_sql, generate_sql_for_question
 from external_utils import download_blob, get_presigned_url, upload_pdf_and_download_json, upload_to_blob
 from extraction import extract_imageresult, extract_tableresult, extract_textresult
 from ingest_doc import create_multi_vector_retriever
@@ -600,6 +600,39 @@ def _match_cached_metric(question: str, cached_metrics: list[dict[str, Any]]) ->
         if metric_title and (normalized_question.startswith(metric_title) or metric_title in normalized_question):
             return metric
     return None
+
+
+def _build_grounded_explanation(primary_result: dict[str, Any], context_rows: list[dict[str, Any]]) -> str | None:
+    if not context_rows:
+        return None
+
+    lead_row = context_rows[0]
+    summaries = [str(row.get("summary", "")).strip() for row in context_rows if row.get("summary")]
+    resolutions = [str(row.get("resolution", "")).strip() for row in context_rows if row.get("resolution")]
+    issues = [str(row.get("issue", "")).strip() for row in context_rows if row.get("issue")]
+
+    lines: list[str] = []
+    if primary_result.get("rows"):
+        top_row = primary_result["rows"][0]
+        label = top_row.get("label")
+        value = top_row.get("value") or top_row.get("total_rows")
+        if label is not None and value is not None:
+            lines.append(f"Top segment in the executed result: {label} ({value}).")
+
+    if summaries:
+        lines.append(f"Representative records mention: {', '.join(list(dict.fromkeys(summaries))[:3])}.")
+    if issues:
+        lines.append(f"Common issue pattern: {issues[0]}")
+    if resolutions:
+        lines.append(f"Grounded resolution example: {resolutions[0]}")
+
+    if not lines:
+        lines.append(
+            "Grounded context is available from matching rows such as "
+            + ", ".join(f"{key}={value}" for key, value in list(lead_row.items())[:4])
+            + "."
+        )
+    return " ".join(lines)
 
 
 def _dataset_metrics_response(dataset_id: str, metrics: list[dict], summary: dict, source: str) -> dict:
@@ -1490,6 +1523,26 @@ async def query_analytics(request: AnalyticsQueryRequest):
         )
     validated_sql = validate_sql(sql, allowed_tables={table_name})
     result = analytics_store.execute_query(dataset_id=dataset_id, sql=validated_sql)
+    explanation = None
+    context_rows: list[dict[str, Any]] = []
+
+    if classification["route"] == "hybrid":
+        try:
+            context_sql = build_context_sql(
+                request.question,
+                dataset_id=dataset_id,
+                table_name=table_name,
+                schema_profile=schema,
+                primary_sql=validated_sql,
+                primary_result=result,
+            )
+            validated_context_sql = validate_sql(context_sql, allowed_tables={table_name})
+            context_result = analytics_store.execute_query(dataset_id=dataset_id, sql=validated_context_sql)
+            context_rows = context_result.get("rows", [])[:5]
+            explanation = _build_grounded_explanation(result, context_rows)
+        except Exception:
+            LOGGER.exception("Hybrid analytics context fetch failed dataset_id=%s question=%s", dataset_id, request.question)
+
     response_payload = {
         "dataset_id": dataset_id,
         "route": classification["route"],
@@ -1498,6 +1551,8 @@ async def query_analytics(request: AnalyticsQueryRequest):
         "result": result,
         "chart_type": chart_type,
         "answer": _analytics_summary_text(request.question, result, chart_type),
+        "grounded_explanation": explanation,
+        "grounded_rows": context_rows,
         "source": result.get("source", "athena"),
     }
     if cached_metric:

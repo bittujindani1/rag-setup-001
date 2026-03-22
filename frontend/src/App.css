@@ -906,6 +906,26 @@ button {
   gap: 18px;
 }
 
+.analytics-hero-strip {
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(14, 165, 233, 0.06));
+  border: 1px solid rgba(15, 118, 110, 0.12);
+}
+
+.analytics-query-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.analytics-query-suggestions .chip {
+  border: 1px solid rgba(15, 118, 110, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .analytics-dataset-list {
   display: grid;
   gap: 10px;
@@ -926,6 +946,24 @@ button {
 .analytics-dataset-item.active {
   border-color: rgba(15, 118, 110, 0.28);
   background: var(--accent-mist);
+}
+
+.analytics-dataset-meta {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+}
+
+.analytics-dataset-meta h4 {
+  margin: 0;
+}
+
+.analytics-dataset-meta p,
+.analytics-dataset-meta small {
+  margin: 0;
+  color: var(--muted);
 }
 
 .analytics-dataset-item span,
@@ -986,6 +1024,29 @@ button {
   display: grid;
   gap: 14px;
   margin-top: 16px;
+}
+
+.analytics-insight-card,
+.analytics-grounded-list {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(15, 118, 110, 0.04);
+}
+
+.analytics-insight-card span,
+.analytics-grounded-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.analytics-insight-card p {
+  margin: 0;
+  color: var(--ink);
 }
 
 .analytics-result-topline {
