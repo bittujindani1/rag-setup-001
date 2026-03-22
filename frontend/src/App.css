@@ -867,12 +867,14 @@ button {
   justify-content: space-between;
   gap: 14px;
   align-items: flex-start;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 
 .analytics-upload {
   display: grid;
-  gap: 8px;
-  min-width: min(360px, 100%);
+  gap: 6px;
+  min-width: min(340px, 100%);
 }
 
 .analytics-upload input,
@@ -924,9 +926,9 @@ button {
 
 .analytics-hero-strip {
   display: grid;
-  gap: 10px;
-  padding: 14px 16px;
-  border-radius: 20px;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 18px;
   background: linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(14, 165, 233, 0.06));
   border: 1px solid rgba(15, 118, 110, 0.12);
 }
@@ -942,14 +944,14 @@ button {
 .analytics-query-suggestions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .analytics-query-suggestions .chip {
   border: 1px solid rgba(15, 118, 110, 0.14);
   background: rgba(255, 255, 255, 0.72);
-  padding: 8px 12px;
-  font-size: 0.88rem;
+  padding: 6px 10px;
+  font-size: 0.8rem;
 }
 
 .analytics-upload-status {
@@ -1121,6 +1123,10 @@ button {
 .analytics-kpi-card strong {
   font-size: 0.98rem;
   line-height: 1.32;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 
 .analytics-kpi-card small {
