@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,6 +64,43 @@ type AgentsTabProps = {
   pushToast: (message: string, tone: 'info' | 'success' | 'error') => void
 }
 
+type AnalyticsMetric = {
+  metric_id: string
+  title: string
+  description: string
+  type: string
+  chart_type: string
+  sql: string
+}
+
+type AnalyticsSummaryResponse = {
+  dataset_id: string
+  summary: Record<string, unknown>
+  metrics: AnalyticsMetric[]
+  source?: string
+}
+
+type AnalyticsQueryResponse = {
+  dataset_id: string
+  route: string
+  reason: string
+  sql: string
+  result: {
+    columns: string[]
+    rows: Array<Record<string, string | number | null>>
+    source: string
+  }
+  chart_type: string
+  answer: string
+  grounded_explanation?: string | null
+  grounded_rows?: Array<Record<string, string | number | null>>
+  source: string
+}
+
+type ChartOption = 'number' | 'bar' | 'pie' | 'table'
+
+const CHART_COLORS = ['#0f766e', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6']
+
 // ---------------------------------------------------------------------------
 // Agent color mapping
 // ---------------------------------------------------------------------------
@@ -84,6 +134,139 @@ function fmtTime(epoch?: number): string {
   return new Date(epoch * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+function formatMetricLabel(value: string): string {
+  return value.replace(/^top_/, 'Top ').replace(/_/g, ' ')
+}
+
+function formatMetricValue(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return 'No data'
+  if (typeof value === 'number') return value.toLocaleString()
+  const numeric = Number(value)
+  if (!Number.isNaN(numeric) && String(value).trim() !== '') {
+    return numeric.toLocaleString()
+  }
+  return String(value)
+}
+
+function formatSummaryCardValue(value: unknown): { primary: string; secondary?: string } {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    const label = record.label ?? record.value ?? record.name
+    const count = record.count ?? record.total ?? record.rows
+    if (label !== undefined) {
+      return {
+        primary: formatMetricValue(
+          typeof label === 'string' || typeof label === 'number' || label === null ? label : String(label),
+        ),
+        secondary:
+          count !== undefined
+            ? `${formatMetricValue(typeof count === 'string' || typeof count === 'number' || count === null ? count : String(count))} records`
+            : undefined,
+      }
+    }
+  }
+  return { primary: formatMetricValue(value as string | number | null | undefined) }
+}
+
+function inferChartType(chartType: string, rows: Array<Record<string, string | number | null>>): ChartOption {
+  if (!rows.length) return 'table'
+  if (chartType === 'number' || (rows.length === 1 && Object.keys(rows[0] ?? {}).length === 1)) return 'number'
+  if (chartType === 'pie') return 'pie'
+  if (chartType === 'table') return 'table'
+  return rows.length <= 6 ? 'pie' : 'bar'
+}
+
+function AnalyticsChart({
+  chartType,
+  rows,
+}: {
+  chartType: ChartOption
+  rows: Array<Record<string, string | number | null>>
+}) {
+  const normalizedRows = useMemo(
+    () =>
+      rows.map((row) => {
+        const entries = Object.entries(row)
+        const label = String(entries[0]?.[1] ?? '')
+        const rawValue = entries[1]?.[1]
+        return {
+          label,
+          value: typeof rawValue === 'number' ? rawValue : Number(rawValue ?? 0),
+        }
+      }),
+    [rows],
+  )
+
+  if (!rows.length) {
+    return <p className="analytics-empty">No chartable rows returned.</p>
+  }
+
+  if (chartType === 'number') {
+    const firstRow = rows[0] ?? {}
+    const firstKey = Object.keys(firstRow)[0] ?? 'value'
+    return (
+      <div className="analytics-number-card">
+        <strong>{formatMetricValue(firstRow[firstKey] as string | number | null | undefined)}</strong>
+        <span>{formatMetricLabel(firstKey)}</span>
+      </div>
+    )
+  }
+
+  if (chartType === 'table') {
+    const columns = Object.keys(rows[0] ?? {})
+    return (
+      <div className="analytics-table-wrap compact">
+        <table>
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={`${index}-${columns.join('-')}`}>
+                {columns.map((column) => (
+                  <td key={column}>{formatMetricValue(row[column] as string | number | null | undefined)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  if (chartType === 'pie') {
+    return (
+      <ResponsiveContainer width="100%" height={220}>
+        <PieChart>
+          <Pie data={normalizedRows} dataKey="value" nameKey="label" outerRadius={84} innerRadius={40}>
+            {normalizedRows.map((entry, index) => (
+              <Cell key={`${entry.label}-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+            ))}
+          </Pie>
+          <Tooltip />
+          <Legend />
+        </PieChart>
+      </ResponsiveContainer>
+    )
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={normalizedRows}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="label" />
+        <YAxis />
+        <Tooltip />
+        <Bar dataKey="value" radius={[10, 10, 0, 0]} fill="#0f766e" />
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // AgentsTab
 // ---------------------------------------------------------------------------
@@ -102,6 +285,9 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
   const [expandedThoughts, setExpandedThoughts] = useState<Set<number>>(new Set())
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set())
   const [workflowOpen, setWorkflowOpen] = useState(true)
+  const [reportSummary, setReportSummary] = useState<Record<string, unknown>>({})
+  const [reportMetrics, setReportMetrics] = useState<AnalyticsMetric[]>([])
+  const [reportMetricResults, setReportMetricResults] = useState<Record<string, AnalyticsQueryResponse>>({})
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -138,6 +324,23 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
     }
   }
 
+  async function _apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+    const headers = new Headers(init?.headers)
+    if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
+    Object.entries(_authHeaders()).forEach(([key, value]) => headers.set(key, value))
+    const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers })
+    if (!response.ok) {
+      throw new Error((await response.text()) || `Request failed: ${response.status}`)
+    }
+    return response.json() as Promise<T>
+  }
+
+  const reportDatasetId = useMemo(() => {
+    return datasetId.trim() || messages.find((message) => message.type === 'analytics_snapshot')?.dataset_id || ''
+  }, [datasetId, messages])
+
   async function _loadPastRuns() {
     try {
       const response = await fetch(`${apiBaseUrl}/SFRAG/agents/runs?workspace_id=${encodeURIComponent(workspaceId)}`, {
@@ -163,6 +366,9 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
     setRunId(null)
     setExpandedThoughts(new Set())
     setExpandedTools(new Set())
+    setReportSummary({})
+    setReportMetrics([])
+    setReportMetricResults({})
     setRunning(true)
 
     abortRef.current = new AbortController()
@@ -276,6 +482,9 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
       setRunId(run.run_id)
       setExpandedThoughts(new Set())
       setExpandedTools(new Set())
+      setReportSummary({})
+      setReportMetrics([])
+      setReportMetricResults({})
 
       // Re-emit stored messages
       for (const msg of data.messages ?? []) {
@@ -352,6 +561,44 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
       return { ...step, status, order: index + 1 }
     })
   })()
+
+  const reportSummaryCards = useMemo(() => Object.entries(reportSummary), [reportSummary])
+
+  useEffect(() => {
+    if (!synthesis || !reportDatasetId) return
+    let cancelled = false
+
+    async function loadReportAnalytics() {
+      try {
+        const response = await _apiFetch<AnalyticsSummaryResponse>(`/SFRAG/analytics/summary/${encodeURIComponent(reportDatasetId)}`)
+        if (cancelled) return
+        setReportSummary(response.summary ?? {})
+        const metrics = (response.metrics ?? []).filter((metric) => metric.type !== 'summary').slice(0, 3)
+        setReportMetrics(metrics)
+        const results = await Promise.all(
+          metrics.map(async (metric) => {
+            const query = await _apiFetch<AnalyticsQueryResponse>('/SFRAG/analytics/query', {
+              method: 'POST',
+              body: JSON.stringify({
+                dataset_id: reportDatasetId,
+                question: metric.title,
+              }),
+            })
+            return [metric.metric_id, query] as const
+          }),
+        )
+        if (cancelled) return
+        setReportMetricResults(Object.fromEntries(results))
+      } catch {
+        // Keep final report usable even if visual analytics hydration fails.
+      }
+    }
+
+    void loadReportAnalytics()
+    return () => {
+      cancelled = true
+    }
+  }, [synthesis, reportDatasetId])
 
   // ---------------------------------------------------------------------------
   // Render
@@ -612,6 +859,50 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
                     <div className="agent-output agent-synthesis-output">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.output ?? ''}</ReactMarkdown>
                     </div>
+                    {reportSummaryCards.length > 0 ? (
+                      <div className="agents-report-visuals">
+                        <div className="panel-head tight">
+                          <div>
+                            <h3>Analytics visuals</h3>
+                            <p className="helper-text">KPI cards and chart snapshots pulled from the selected analytics dataset.</p>
+                          </div>
+                        </div>
+                        <div className="analytics-card-grid agents-report-kpis">
+                          {reportSummaryCards.map(([key, value]) => {
+                            const display = formatSummaryCardValue(value)
+                            return (
+                              <article key={key} className="analytics-kpi-card compact">
+                                <span>{formatMetricLabel(key)}</span>
+                                <strong>{display.primary}</strong>
+                                {display.secondary ? <small>{display.secondary}</small> : null}
+                              </article>
+                            )
+                          })}
+                        </div>
+                        {reportMetrics.length > 0 ? (
+                          <div className="analytics-visual-grid agents-report-charts">
+                            {reportMetrics.map((metric) => {
+                              const result = reportMetricResults[metric.metric_id]
+                              return (
+                                <section key={metric.metric_id} className="analytics-visual-card compact">
+                                  <div className="panel-head tight">
+                                    <div>
+                                      <h3>{metric.title}</h3>
+                                      <p className="helper-text">{metric.description}</p>
+                                    </div>
+                                  </div>
+                                  {result ? (
+                                    <AnalyticsChart chartType={inferChartType(result.chart_type, result.result.rows)} rows={result.result.rows} />
+                                  ) : (
+                                    <p className="analytics-empty">Loading chart...</p>
+                                  )}
+                                </section>
+                              )
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <div className="agent-actions">
                       <button className="primary-button" onClick={handleCopyReport}>
                         Copy Report

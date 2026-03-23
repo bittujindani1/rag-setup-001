@@ -1955,6 +1955,30 @@ button {
   border-style: solid;
 }
 
+.agents-report-visuals {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: .9rem;
+}
+
+.agents-report-kpis {
+  gap: .7rem;
+}
+
+.agents-report-kpis .analytics-kpi-card.compact {
+  min-height: 96px;
+}
+
+.agents-report-charts {
+  gap: .8rem;
+}
+
+.agents-report-charts .analytics-visual-card.compact {
+  min-height: 0;
+}
+
 /* Timeline */
 .agents-timeline-container {
   flex: 1;
