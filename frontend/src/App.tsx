@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { AnalyticsTab } from './components/AnalyticsTab'
+import { AgentsTab } from './components/AgentsTab'
 import './App.css'
 
 type Message = {
@@ -203,7 +204,7 @@ function App() {
   const [loginUsername, setLoginUsername] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
   const [loginError, setLoginError] = useState('')
-  const [appView, setAppView] = useState<'chat' | 'analytics'>('chat')
+  const [appView, setAppView] = useState<'chat' | 'analytics' | 'agents'>('chat')
   const [personalWorkspace, setPersonalWorkspace] = useState(DEFAULT_INDEX)
   const [personalWorkspaceHistory, setPersonalWorkspaceHistory] = useState<string[]>([])
   const [workspaceDraft, setWorkspaceDraft] = useState(DEFAULT_INDEX)
@@ -861,6 +862,9 @@ function App() {
             <button className={`workspace-tab ${appView === 'analytics' ? 'active' : ''}`} onClick={() => setAppView('analytics')}>
               Analytics
             </button>
+            <button className={`workspace-tab ${appView === 'agents' ? 'active' : ''}`} onClick={() => setAppView('agents')}>
+              Agents
+            </button>
           </div>
           {appView === 'analytics' ? <p className="helper-text">Switch to the analytics tab to upload structured datasets and run SQL-backed insights.</p> : null}
           {appView === 'chat' ? (
@@ -1118,7 +1122,23 @@ function App() {
       </aside>
 
       <main className="workspace">
-        {appView === 'analytics' ? (
+        {appView === 'agents' ? (
+          <>
+            <AgentsTab
+              apiBaseUrl={API_BASE_URL}
+              indexName={indexName}
+              workspaceId={indexName}
+              pushToast={pushToast}
+            />
+            <div className="toast-stack" aria-live="polite">
+              {toasts.map((toast) => (
+                <div key={toast.id} className={`toast ${toast.tone}`}>
+                  {toast.message}
+                </div>
+              ))}
+            </div>
+          </>
+        ) : appView === 'analytics' ? (
           <>
             <AnalyticsTab apiBaseUrl={API_BASE_URL} pushToast={pushToast} />
             <div className="toast-stack" aria-live="polite">

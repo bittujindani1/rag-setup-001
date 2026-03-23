@@ -1145,6 +1145,90 @@ async def submit_feedback(request: FeedbackRequest):
 #     multimodal_url_list: List[str] = []
 
 
+# ---------------------------------------------------------------------------
+# Multi-Agent Collaboration endpoints
+# ---------------------------------------------------------------------------
+
+from agent_orchestrator import (
+    GOAL_PRESETS,
+    AgentRun,
+    get_run_from_s3,
+    list_runs_from_s3,
+    save_run_to_s3,
+)
+
+
+class AgentRunRequest(BaseModel):
+    goal: str
+    dataset_id: str | None = None
+    index_name: str | None = None
+    workspace_id: str = "demo-shared"
+
+
+@app.get("/SFRAG/agents/presets")
+async def agent_presets():
+    return {"presets": GOAL_PRESETS}
+
+
+@app.post("/SFRAG/agents/runs")
+async def start_agent_run(payload: AgentRunRequest):
+    goal = (payload.goal or "").strip()
+    if not goal:
+        raise HTTPException(status_code=400, detail="goal is required")
+    if len(goal) > 500:
+        raise HTTPException(status_code=400, detail="goal exceeds 500 characters")
+
+    workspace_id = _validate_index_name(payload.workspace_id) if payload.workspace_id else "demo-shared"
+    dataset_id = payload.dataset_id
+    index_name = _validate_index_name(payload.index_name) if payload.index_name else None
+
+    run = AgentRun(
+        goal=goal,
+        dataset_id=dataset_id,
+        index_name=index_name,
+        workspace_id=workspace_id,
+    )
+
+    def _stream():
+        for chunk in run.run_streaming():
+            yield chunk
+        # Persist after streaming completes
+        try:
+            save_run_to_s3(run)
+        except Exception:
+            pass
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/SFRAG/agents/runs")
+async def list_agent_runs(workspace_id: str = "demo-shared"):
+    workspace_id = _validate_index_name(workspace_id) if workspace_id else "demo-shared"
+    runs = list_runs_from_s3(workspace_id)
+    return {"runs": runs}
+
+
+@app.get("/SFRAG/agents/runs/{run_id}")
+async def get_agent_run(run_id: str, workspace_id: str = "demo-shared"):
+    workspace_id = _validate_index_name(workspace_id) if workspace_id else "demo-shared"
+    run = get_run_from_s3(workspace_id, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
+
+# ---------------------------------------------------------------------------
+# End multi-agent endpoints
+# ---------------------------------------------------------------------------
+
+
 @app.post("/SFRAG/retrieval")
 async def multi_modal_query(query_request: QueryRequest, request: Request):
     query_request.index_name = _validate_index_name(query_request.index_name)
