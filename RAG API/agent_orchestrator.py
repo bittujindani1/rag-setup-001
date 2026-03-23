@@ -204,6 +204,7 @@ class AgentRun:
         self.created_at = int(time.time())
         self._bedrock = get_bedrock_client()
         self._analytics = get_analytics_store() if dataset_id else None
+        self._analytics_snapshot: str | None = None  # loaded lazily
 
     # ------------------------------------------------------------------
     # Planning
@@ -359,19 +360,83 @@ class AgentRun:
         return message
 
     # ------------------------------------------------------------------
+    # Analytics snapshot (from existing Analytics tab data)
+    # ------------------------------------------------------------------
+
+    def _load_analytics_snapshot(self) -> str | None:
+        """
+        Pull the pre-computed analytics summary + top metrics for the dataset
+        from the existing S3 cache (same data shown in the Analytics tab).
+        Returns a markdown-formatted string or None if unavailable.
+        """
+        if not self._analytics or not self.dataset_id:
+            return None
+        try:
+            cached = self._analytics.load_metrics_cache(self.dataset_id)
+            if not cached:
+                rows = self._analytics.load_dataset_rows(self.dataset_id)
+                if not rows:
+                    return None
+                schema = self._analytics.get_schema(self.dataset_id) or self._analytics.profile_schema(rows)
+                summary = self._analytics.build_summary_metrics(rows, schema)
+                cached = {"summary": summary, "metrics": []}
+
+            summary = cached.get("summary", {})
+            metrics = cached.get("metrics", [])
+
+            lines = ["## Analytics KPIs"]
+            lines.append(f"- Dataset: `{self.dataset_id}`")
+            lines.append(f"- Total rows: {summary.get('total_rows', 'unknown')}")
+
+            for key, val in summary.items():
+                if key == "total_rows" or not isinstance(val, dict):
+                    continue
+                col = key.replace("top_", "").replace("_", " ")
+                label = val.get("label", "-")
+                count = val.get("count", "-")
+                lines.append(f"- Top {col}: {label} ({count})")
+
+            if metrics:
+                lines.append("")
+                lines.append("## Supporting Metrics")
+                lines.append("| Metric | Description |")
+                lines.append("| --- | --- |")
+                for metric in metrics[:6]:
+                    lines.append(f"| {metric.get('title', '')} | {metric.get('description', '')} |")
+
+            return "\n".join(lines)
+        except Exception as exc:
+            LOGGER.warning("Failed to load analytics snapshot: %s", exc)
+            return None
+
+    # ------------------------------------------------------------------
     # Synthesis
     # ------------------------------------------------------------------
 
     def synthesize(self) -> dict:
-        """Final synthesis of all agent outputs."""
+        """Final synthesis of all agent outputs, enriched with Analytics tab data."""
         all_outputs = "\n\n".join(
             f"**[{m['agent_name']}]** — {m['task']}\n{m['output']}"
             for m in self.messages
         )
+
+        # Load analytics snapshot (same data shown in Analytics tab)
+        if self._analytics_snapshot is None:
+            self._analytics_snapshot = self._load_analytics_snapshot()
+
+        analytics_section = (
+            f"\n\nAnalytics Dashboard data (from structured dataset):\n{self._analytics_snapshot}"
+            if self._analytics_snapshot
+            else ""
+        )
+
         prompt = (
             f"Goal: {self.goal}\n\n"
-            f"Agent outputs:\n{all_outputs}\n\n"
-            "Synthesize all findings into a complete, well-structured deliverable."
+            f"Agent outputs:\n{all_outputs}"
+            f"{analytics_section}\n\n"
+            "Synthesize all findings into a complete, well-structured deliverable. "
+            "If Analytics Dashboard data is provided, include dedicated sections named "
+            "'## Analytics KPIs' and '## Supporting Metrics' using the exact structured metrics."
         )
         final = self._bedrock.generate_text(
             prompt=prompt,
@@ -379,6 +444,10 @@ class AgentRun:
             max_tokens=1500,
             temperature=0.1,
         )
+        if self._analytics_snapshot and (
+            "## Analytics KPIs" not in final or "## Supporting Metrics" not in final
+        ):
+            final = f"{final.rstrip()}\n\n{self._analytics_snapshot}"
         message = {
             "type": "synthesis",
             "agent": "synthesizer",
@@ -434,6 +503,19 @@ class AgentRun:
             "color": AGENTS["planner"]["color"],
             "timestamp": time.time(),
         })
+
+        # 1b. Pre-load analytics snapshot and stream it as context
+        self._analytics_snapshot = self._load_analytics_snapshot()
+        if self._analytics_snapshot:
+            yield sse("analytics_snapshot", {
+                "agent": "analyst",
+                "agent_name": "Analytics Dashboard",
+                "icon": "chart-bar",
+                "color": "teal",
+                "dataset_id": self.dataset_id,
+                "snapshot": self._analytics_snapshot,
+                "timestamp": time.time(),
+            })
 
         # 2. Execute steps
         for step in steps:

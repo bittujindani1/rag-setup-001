@@ -14,7 +14,7 @@ type GoalPreset = {
 }
 
 type AgentMessage = {
-  type: 'plan' | 'agent_message' | 'synthesis' | 'done'
+  type: 'plan' | 'agent_message' | 'analytics_snapshot' | 'synthesis' | 'done'
   run_id?: string
   goal?: string
   steps?: Array<{ agent: string; task: string }>
@@ -27,6 +27,8 @@ type AgentMessage = {
   tool_used?: string | null
   tool_result?: string | null
   output?: string
+  snapshot?: string
+  dataset_id?: string
   timestamp?: number
   total_steps?: number
   created_at?: number
@@ -99,6 +101,7 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
   const [pastRuns, setPastRuns] = useState<PastRun[]>([])
   const [expandedThoughts, setExpandedThoughts] = useState<Set<number>>(new Set())
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set())
+  const [workflowOpen, setWorkflowOpen] = useState(true)
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -234,6 +237,7 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
         setPlanSteps(payload.steps ?? [])
         setMessages((prev) => [...prev, payload])
         break
+      case 'analytics_snapshot':
       case 'agent_message':
         setMessages((prev) => [...prev, payload])
         break
@@ -301,6 +305,53 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
       return next
     })
   }
+
+  const workflowSteps = (() => {
+    const baseSteps =
+      planSteps.length > 0
+        ? planSteps.map((step, index) => ({
+            id: `${step.agent}-${index}`,
+            agent: step.agent,
+            label: AGENT_LABELS[step.agent] ?? step.agent,
+            task: step.task,
+          }))
+        : [
+            { id: 'planner', agent: 'planner', label: 'Planner', task: 'Break down the goal into coordinated tasks.' },
+            { id: 'analyst', agent: 'analyst', label: 'Analyst', task: 'Query structured data and surface KPI findings.' },
+            { id: 'researcher', agent: 'researcher', label: 'Researcher', task: 'Search RAG knowledge and ticket evidence.' },
+            { id: 'executor', agent: 'executor', label: 'Executor', task: 'Draft recommended actions and next steps.' },
+            { id: 'synthesizer', agent: 'synthesizer', label: 'Synthesizer', task: 'Assemble the final report.' },
+          ]
+
+    const completedAgents = new Set(
+      messages
+        .filter((message) => message.type === 'agent_message' || message.type === 'synthesis')
+        .map((message) => message.agent)
+        .filter(Boolean) as string[],
+    )
+
+    const latestAgentMessage = [...messages]
+      .reverse()
+      .find((message) => message.type === 'agent_message' || message.type === 'synthesis')
+    const activeAgent = running ? latestAgentMessage?.agent ?? (planSteps[0]?.agent || 'planner') : null
+
+    return baseSteps.map((step, index) => {
+      let status: 'pending' | 'active' | 'done' = 'pending'
+      if (step.agent === 'planner' && planSteps.length > 0) {
+        status = 'done'
+      }
+      if (completedAgents.has(step.agent)) {
+        status = 'done'
+      }
+      if (running && activeAgent === step.agent && !completedAgents.has(step.agent)) {
+        status = 'active'
+      }
+      if (!running && synthesis && step.agent === 'synthesizer') {
+        status = 'done'
+      }
+      return { ...step, status, order: index + 1 }
+    })
+  })()
 
   // ---------------------------------------------------------------------------
   // Render
@@ -387,6 +438,37 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
               ))}
             </div>
           )}
+
+          <div className="agents-workflow-box">
+            <button
+              type="button"
+              className="accordion-toggle agents-workflow-toggle"
+              onClick={() => setWorkflowOpen((current) => !current)}
+            >
+              <div>
+                <strong>Agent workflow</strong>
+                <p className="accordion-helper">Visual step-by-step view of how the agents collaborate on this goal.</p>
+              </div>
+              <span className={`accordion-chevron ${workflowOpen ? 'open' : ''}`}>⌄</span>
+            </button>
+            {workflowOpen ? (
+              <div className="agents-workflow-graph">
+                {workflowSteps.map((step, index) => (
+                  <div key={step.id} className="agents-workflow-node-wrap">
+                    <div className={`agents-workflow-node ${AGENT_COLORS[step.agent] ?? 'agent-gray'} is-${step.status}`}>
+                      <span className="agents-workflow-order">{step.order}</span>
+                      <span className="agents-workflow-label">{step.label}</span>
+                      <span className={`agents-workflow-status status-${step.status}`}>
+                        {step.status === 'done' ? 'Done' : step.status === 'active' ? 'Working' : 'Queued'}
+                      </span>
+                      <p>{step.task}</p>
+                    </div>
+                    {index < workflowSteps.length - 1 ? <div className="agents-workflow-connector" aria-hidden="true" /> : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {/* Agent timeline */}
@@ -428,6 +510,27 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
                         </li>
                       ))}
                     </ol>
+                  </div>
+                </div>
+              )
+            }
+
+            if (msg.type === 'analytics_snapshot') {
+              return (
+                <div key={index} className="agent-card agent-teal agent-analytics-snapshot">
+                  <div className="agent-card-header">
+                    <span className="agent-avatar agent-teal">📊</span>
+                    <div className="agent-card-meta">
+                      <span className="agent-name">Analytics Dashboard</span>
+                      <span className="agent-tool-badge">⚡ {msg.dataset_id}</span>
+                      <span className="agent-time">{fmtTime(msg.timestamp)}</span>
+                    </div>
+                  </div>
+                  <div className="agent-card-body">
+                    <p className="agent-task-label">Structured metrics from the Analytics tab</p>
+                    <div className="agent-output">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.snapshot ?? ''}</ReactMarkdown>
+                    </div>
                   </div>
                 </div>
               )

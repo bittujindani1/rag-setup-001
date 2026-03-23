@@ -1836,6 +1836,125 @@ button {
   cursor: not-allowed;
 }
 
+.agents-workflow-box {
+  margin-top: .8rem;
+  border: 1px solid var(--line);
+  border-radius: .8rem;
+  background: var(--paper-strong);
+  overflow: hidden;
+}
+
+.agents-workflow-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  padding: .75rem .9rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.agents-workflow-toggle strong {
+  display: block;
+  font-size: .84rem;
+}
+
+.agents-workflow-toggle .accordion-helper {
+  margin: .2rem 0 0;
+  font-size: .76rem;
+}
+
+.agents-workflow-graph {
+  display: flex;
+  gap: .45rem;
+  overflow-x: auto;
+  padding: 0 .9rem .9rem;
+}
+
+.agents-workflow-node-wrap {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  min-width: 0;
+}
+
+.agents-workflow-node {
+  min-width: 180px;
+  max-width: 220px;
+  border: 1px solid var(--agent-border, var(--line));
+  border-radius: .9rem;
+  background: var(--agent-bg, var(--paper));
+  padding: .7rem .75rem;
+  display: grid;
+  gap: .3rem;
+  position: relative;
+}
+
+.agents-workflow-node p {
+  margin: 0;
+  color: var(--muted);
+  font-size: .74rem;
+  line-height: 1.4;
+}
+
+.agents-workflow-order {
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  background: var(--agent-badge, #475569);
+  color: var(--agent-badge-fg, #fff);
+  font-size: .68rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agents-workflow-label {
+  font-size: .8rem;
+  font-weight: 700;
+}
+
+.agents-workflow-status {
+  font-size: .68rem;
+  font-weight: 600;
+  width: fit-content;
+  padding: .12rem .45rem;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.12);
+  color: var(--muted);
+}
+
+.agents-workflow-status.status-done {
+  background: rgba(21, 128, 61, 0.14);
+  color: #15803d;
+}
+
+.agents-workflow-status.status-active {
+  background: rgba(15, 118, 110, 0.14);
+  color: var(--accent-strong);
+}
+
+.agents-workflow-connector {
+  width: 28px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent-soft), var(--line-strong));
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.agents-workflow-node.is-active {
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.12);
+}
+
+.agents-workflow-node.is-done {
+  border-style: solid;
+}
+
 /* Timeline */
 .agents-timeline-container {
   flex: 1;
