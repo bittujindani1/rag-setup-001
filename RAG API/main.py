@@ -344,9 +344,14 @@ def _load_docs_for_filenames(index_name: str, filenames: list[str], max_docs: in
     return loaded_docs
 
 
-def _download_s3_object_to_temp(index_name: str, s3_key: str, content_type: str | None) -> tuple[str, bytes, str, str]:
+def _download_s3_object_to_temp(
+    index_name: str,
+    s3_key: str,
+    content_type: str | None,
+    display_filename: str | None = None,
+) -> tuple[str, bytes, str, str]:
     config = get_config()
-    filename = os.path.basename(s3_key)
+    filename = (display_filename or os.path.basename(s3_key)).strip() or os.path.basename(s3_key)
     temp_dir = _ensure_temp_dir("s3_ingest_tmp", uuid.uuid4().hex)
     local_path = temp_dir / filename
     s3_client = boto3.client("s3", region_name=config["aws_region"])
@@ -393,6 +398,7 @@ class S3IngestRequest(BaseModel):
     index_name: str
     s3_key: str
     content_type: str | None = None
+    filename: str | None = None
 
 
 class TicketIngestRequest(BaseModel):
@@ -1670,6 +1676,7 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
 def ingest_document(
     index_name: str = Form(...),
     s3_key: str | None = Form(None),
+    filename: str | None = Form(None),
     file: UploadFile | None = File(None),
 ):
     index_name = _validate_index_name(index_name)
@@ -1678,11 +1685,16 @@ def ingest_document(
 
     local_path = None
     temp_dir = None
-    file_name = getattr(file, "filename", None) or os.path.basename(s3_key or "")
+    file_name = (getattr(file, "filename", None) or filename or os.path.basename(s3_key or "")).strip()
 
     try:
         if s3_key:
-            local_path, file_bytes, content_type, input_file_url = _download_s3_object_to_temp(index_name, s3_key, None)
+            local_path, file_bytes, content_type, input_file_url = _download_s3_object_to_temp(
+                index_name,
+                s3_key,
+                None,
+                file_name,
+            )
         else:
             assert file is not None
             file_bytes = file.file.read()
@@ -1723,10 +1735,11 @@ def ingest_document(
 async def ingest_document_async(request: S3IngestRequest):
     request.index_name = _validate_index_name(request.index_name)
     job_id = uuid.uuid4().hex
-    get_ingest_job_store().create_job(job_id, request.index_name, os.path.basename(request.s3_key), "document")
+    display_name = (request.filename or os.path.basename(request.s3_key)).strip()
+    get_ingest_job_store().create_job(job_id, request.index_name, display_name, "document")
     try:
         get_ingest_job_store().update_job(job_id, status="running")
-        result = ingest_document(index_name=request.index_name, s3_key=request.s3_key, file=None)
+        result = ingest_document(index_name=request.index_name, s3_key=request.s3_key, filename=display_name, file=None)
         get_ingest_job_store().update_job(job_id, status="completed", result=result)
     except Exception as exc:
         get_ingest_job_store().update_job(job_id, status="failed", error=str(exc))

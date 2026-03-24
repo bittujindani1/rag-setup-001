@@ -951,6 +951,7 @@ function App() {
           index_name: indexName,
           s3_key: presignedUpload.object_key,
           content_type: pendingFile.type || 'application/octet-stream',
+          filename: pendingFile.name,
         }),
       })
       const completedJob = await waitForIngestJob(queuedJob.job_id)
