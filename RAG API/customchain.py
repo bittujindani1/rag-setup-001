@@ -23,6 +23,7 @@ Answer only using the provided context. Do not use outside knowledge, internet k
 If the answer is not available in the provided context, say exactly:
 "The documents do not contain this information."
 Keep responses direct and professional. Do not mention that the answer was retrieved.
+When the context contains chunks from multiple source documents (marked with [Source: filename]), include information from ALL relevant sources and mention the source document name when citing specific facts.
 """
 
 

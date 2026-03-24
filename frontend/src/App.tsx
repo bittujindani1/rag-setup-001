@@ -1199,6 +1199,16 @@ function App() {
         <div className="panel brand-panel">
           <div className="brand-row">
             <img className="brand-logo" src={logoSrc} alt="RAG demo logo" />
+            <div className="session-card">
+              <div className="session-copy">
+                <span className="session-label">Signed in</span>
+                <strong>{authSession.username}</strong>
+                <small>{isAdmin ? 'Administrator access' : 'Standard portal access'}</small>
+              </div>
+              <button className="ghost-button session-logout" onClick={handleLogout}>
+                Log off
+              </button>
+            </div>
             <div className="brand-actions">
               {isAdmin ? (
                 <button className="ghost-button danger-toggle" onClick={() => void handleAdminReset()}>
@@ -1207,9 +1217,6 @@ function App() {
               ) : null}
               <button className="ghost-button theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
                 {theme === 'light' ? 'Dark mode' : 'Light mode'}
-              </button>
-              <button className="ghost-button theme-toggle" onClick={handleLogout}>
-                Logout
               </button>
             </div>
           </div>

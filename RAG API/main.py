@@ -1833,14 +1833,22 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
         if not requested_filenames and not query_request.document_filter and ranked_candidate_documents:
             top_document_score = _document_keyword_score(query_request.user_query, ranked_candidate_documents[0])
             if top_document_score > 0:
-                top_filenames = {
-                    str(item.get("filename", ""))
-                    for item in ranked_candidate_documents[:2]
-                    if _document_keyword_score(query_request.user_query, item) >= max(2.5, top_document_score - 1.5)
-                }
-                filtered_docs = [doc for doc in retrieved_docs if doc.metadata.get("filename") in top_filenames]
-                if filtered_docs:
-                    retrieved_docs = filtered_docs
+                all_scores = [
+                    (str(item.get("filename", "")), _document_keyword_score(query_request.user_query, item))
+                    for item in ranked_candidate_documents
+                ]
+                # Only narrow down when the top doc is clearly more relevant than the rest;
+                # if multiple docs score similarly, keep them all so generic queries
+                # (e.g. "types of coverage") search across all documents.
+                second_best = all_scores[1][1] if len(all_scores) > 1 else 0.0
+                if top_document_score - second_best > 3.0:
+                    top_filenames = {
+                        name for name, score in all_scores
+                        if score >= max(2.5, top_document_score - 1.5)
+                    }
+                    filtered_docs = [doc for doc in retrieved_docs if doc.metadata.get("filename") in top_filenames]
+                    if filtered_docs:
+                        retrieved_docs = filtered_docs
     prepared_context["docs"] = retrieved_docs
     processed_metadata = preprocess_metadata(retrieved_docs)
     citations_task = asyncio.create_task(

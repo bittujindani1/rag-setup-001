@@ -65,6 +65,9 @@ def split_image_text_types(docs):
             doc_content = resize_base64_image(doc_content, size=(1300, 600))
             b64_images.append(doc_content)
         else:
+            # Prefix with source filename so the LLM can attribute correctly
+            if isinstance(doc, Document) and doc.metadata.get("filename"):
+                doc_content = f"[Source: {doc.metadata['filename']}]\n{doc_content}"
             texts.append(doc_content)
     return {"images": b64_images, "texts": texts}
 
