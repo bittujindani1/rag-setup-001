@@ -53,6 +53,34 @@ def _wants_table_response(question: str) -> bool:
     )
 
 
+def _should_rewrite_question(user_input: str) -> bool:
+    lowered = (user_input or "").strip().lower()
+    if not lowered:
+        return False
+    contextual_markers = (
+        "this ",
+        "that ",
+        "these ",
+        "those ",
+        "it ",
+        "they ",
+        "them ",
+        "same ",
+        "above ",
+        "earlier ",
+        "previous ",
+        "again",
+        "compare",
+        "what about",
+        "how about",
+    )
+    if any(marker in lowered for marker in contextual_markers):
+        return True
+    if "?" not in lowered and len(lowered.split()) <= 4:
+        return False
+    return False
+
+
 class MultiModalRAGChainWithHistory:
     def __init__(self, retriever) -> None:
         self.retriever = retriever
@@ -69,6 +97,8 @@ class MultiModalRAGChainWithHistory:
 
     def _rewrite_question(self, user_input: str, history_messages: List) -> str:
         if not history_messages:
+            return user_input
+        if not _should_rewrite_question(user_input):
             return user_input
         prompt = (
             f"Conversation history:\n{self._history_to_text(history_messages)}\n\n"

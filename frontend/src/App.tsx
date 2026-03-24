@@ -382,6 +382,7 @@ function inferDocumentFilter(
 
   const preferredDocument = pickPreferredDocument(documents, preferredFilename)
   if (!preferredDocument) return null
+  if (documents.length !== 1) return null
   if (
     loweredPrompt.includes('uploaded document')
     || loweredPrompt.includes('uploaded pdf')
