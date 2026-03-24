@@ -282,6 +282,26 @@ def _normalize_filename_hint(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
+def _filename_hint_tokens(value: str) -> set[str]:
+    stop_words = {
+        "pdf",
+        "doc",
+        "document",
+        "demo",
+        "sample",
+        "test",
+        "policy",
+        "plan",
+        "file",
+    }
+    tokens = {
+        token
+        for token in re.split(r"[^a-z0-9]+", (value or "").lower())
+        if len(token) >= 4 and token not in stop_words
+    }
+    return tokens
+
+
 def _detect_requested_filenames(index_name: str, query: str, explicit_filter: str | None) -> list[str]:
     available_filenames = [
         str(item.get("filename", "")).strip()
@@ -293,16 +313,19 @@ def _detect_requested_filenames(index_name: str, query: str, explicit_filter: st
 
     lowered_query = (query or "").lower()
     normalized_query = _normalize_filename_hint(lowered_query)
+    query_tokens = _filename_hint_tokens(lowered_query)
     matches: list[str] = []
     for filename in available_filenames:
         lowered_filename = filename.lower()
         normalized_filename = _normalize_filename_hint(filename)
         stem = Path(filename).stem.lower()
         normalized_stem = _normalize_filename_hint(stem)
+        stem_tokens = _filename_hint_tokens(stem)
         if (
             lowered_filename in lowered_query
             or (normalized_filename and normalized_filename in normalized_query)
             or (normalized_stem and normalized_stem in normalized_query)
+            or (query_tokens and stem_tokens and query_tokens.intersection(stem_tokens))
         ):
             matches.append(filename)
     return list(dict.fromkeys(matches))
