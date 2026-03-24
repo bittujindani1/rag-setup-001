@@ -51,11 +51,8 @@ def deduplicate_citations(citations):
 
     for citation in citations:
         citation["pdf_url"] = _refresh_presigned_pdf_url(citation.get("pdf_url"))
-        citation_key = (
-            citation.get("type"),
-            citation.get("filename"),
-            citation.get("pdf_url"),
-        )
+        # Deduplicate by filename only — presigned URLs differ per chunk
+        citation_key = citation.get("filename") or citation.get("pdf_url") or id(citation)
 
         if citation_key not in seen:
             seen[citation_key] = citation
@@ -69,7 +66,10 @@ def deduplicate_citations(citations):
 
             existing_pages = existing_citation.get("page_numbers", [])
             new_pages = citation.get("page_numbers", [])
-            combined_pages = sorted(set(existing_pages + new_pages), key=lambda x: int(x))
+            combined_pages = sorted(
+                {str(p) for p in (existing_pages + new_pages) if str(p).strip() and str(p) != "N/A"},
+                key=lambda x: int(x) if x.isdigit() else 0,
+            )
             existing_citation["page_numbers"] = combined_pages
 
     return unique_citations

@@ -10,7 +10,7 @@ type Message = {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
-  citations?: Array<{ pdf_url?: string; filename?: string }>
+  citations?: Array<{ pdf_url?: string; filename?: string; page_numbers?: string[] }>
 }
 
 type Thread = {
@@ -1685,11 +1685,13 @@ function App() {
                               <span className="bubble-sources-label">Sources</span>
                               <div className="bubble-source-list">
                                 {message.citations.map((citation, citationIndex) => {
-                                  const label = citation.filename || citation.pdf_url || `Source ${citationIndex + 1}`
+                                  const name = citation.filename || citation.pdf_url || `Source ${citationIndex + 1}`
+                                  const pages = (citation.page_numbers ?? []).filter((p) => p && p !== 'N/A')
+                                  const label = pages.length > 0 ? `${name} (p. ${pages.join(', ')})` : name
                                   const href = citation.pdf_url && citation.pdf_url !== 'N/A' ? citation.pdf_url : undefined
                                   return href ? (
                                     <a
-                                      key={`${label}-${citationIndex}`}
+                                      key={`${name}-${citationIndex}`}
                                       className="bubble-source-pill"
                                       href={href}
                                       target="_blank"
@@ -1698,7 +1700,7 @@ function App() {
                                       {label}
                                     </a>
                                   ) : (
-                                    <span key={`${label}-${citationIndex}`} className="bubble-source-pill">
+                                    <span key={`${name}-${citationIndex}`} className="bubble-source-pill">
                                       {label}
                                     </span>
                                   )
