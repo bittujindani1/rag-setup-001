@@ -492,6 +492,29 @@ def _extract_query_from_image(file_bytes: bytes, prompt_hint: str | None = None)
     }
 
 
+def _answer_question_from_image(file_bytes: bytes, question: str) -> str:
+    encoded_image = _image_to_png_base64(file_bytes)
+    system_prompt = (
+        "You answer user questions directly from the uploaded image or screenshot.\n"
+        "Use only what is visible in the image. Do not use outside knowledge or assumptions.\n"
+        "If the answer is not visible in the image, say exactly: \"The image does not contain this information.\"\n"
+        "If the user asks for a table, return a markdown table.\n"
+        "Keep the answer concise and professional.\n"
+    )
+    text_prompt = (
+        f"Question: {question}\n\n"
+        "Answer using only the image content. If useful, quote labels or values exactly as shown."
+    )
+    answer = get_bedrock_client().generate_multimodal_text(
+        text_prompt=text_prompt,
+        images_base64=[encoded_image],
+        system_prompt=system_prompt,
+        max_tokens=700,
+        temperature=0.0,
+    )
+    return (answer or "").strip() or "The image does not contain this information."
+
+
 def _workspace_document_count(index_name: str) -> int:
     return len(get_document_category_store().list_documents(index_name))
 
@@ -1805,20 +1828,45 @@ async def retrieval_from_image(
     if not query_text:
         raise HTTPException(status_code=400, detail="Could not determine a usable question from the image.")
 
-    response = await multi_modal_query(
-        QueryRequest(
-            user_query=query_text,
-            index_name=index_name,
-            session_id=session_id,
+    auth_user, auth_identifier = _request_identity(request)
+    if thread_id:
+        thread_store.ensure_thread(
             thread_id=thread_id,
-        ),
-        request,
-    )
+            user_id=auth_user,
+            user_identifier=auth_identifier,
+            name=(query_text or file.filename or "Image question")[:80],
+            metadata={
+                "session_id": session_id,
+                "workspace_id": index_name,
+                "index_name": index_name,
+            },
+        )
 
-    if isinstance(response, JSONResponse):
-        payload = json.loads(response.body.decode("utf-8"))
-    else:
-        payload = {"mode": "answer", "response": {"content": ""}, "citation": []}
+    answer_text = _answer_question_from_image(file_bytes, query_text)
+    payload = {
+        "mode": "answer",
+        "response": {"content": answer_text},
+        "citation": [],
+        "selected_category": None,
+    }
+
+    if thread_id:
+        thread_store.save_message(
+            thread_id=thread_id,
+            role="user",
+            content=prompt or f"[Image attached: {file.filename}]",
+            user_id=auth_user,
+            user_identifier=auth_identifier,
+            thread_name=(query_text or file.filename or "Image question")[:80],
+        )
+        thread_store.save_message(
+            thread_id=thread_id,
+            role="assistant",
+            content=answer_text,
+            user_id=auth_user,
+            user_identifier=auth_identifier,
+            thread_name=(query_text or file.filename or "Image question")[:80],
+        )
 
     payload["image_query"] = {
         "extracted_text": extracted["extracted_text"],
