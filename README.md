@@ -30,6 +30,52 @@ This repository keeps the existing BOT and FastAPI RAG flow intact while refacto
 - `terraform`
 - `docs`
 
+## Current product capabilities
+
+This repository currently exposes three user-facing tabs in the React frontend:
+
+1. `Chat`
+   - Retrieval-augmented Q&A over uploaded and indexed documents
+   - Persistent thread history
+   - Citation-backed responses
+   - Workspace-aware document access
+   - Image-assisted question extraction for screenshot-style queries
+
+2. `Analytics`
+   - Structured dataset upload and schema profiling
+   - KPI summary generation
+   - SQL-backed analytics queries
+   - Chart and table rendering for dataset metrics
+
+3. `Agents`
+   - Goal-based multi-agent orchestration
+   - Planner, analyst, researcher, executor, and synthesizer flow
+   - Final report generation
+   - Analytics KPI enrichment in the final report when a dataset is attached
+
+## RAG features in the active path
+
+- Query decomposition support exists in the BOT flow for some complex questions.
+- Query reformulation support exists in the current utility flow for retrieval-oriented prompts.
+- Retrieval uses S3-backed embedding recall plus reranking, then passes the final grounded context to Bedrock.
+- Citations are generated from the same reranked chunk set used for answer generation.
+- Chat and thread history are persisted with DynamoDB in the AWS path.
+- Document ingestion supports text, tables, and images extracted from uploaded files.
+- Image-assisted retrieval is supported for screenshot-style user questions.
+
+## Not in the active implementation
+
+The current AWS serverless implementation does not document or rely on the following as active features:
+
+- PGVector as the live vector database
+- Apache AGE graph storage in the active runtime path
+- HDBSCAN-based semantic clustering as a platform feature
+- CrossEncoder reranking in the active retrieval path
+- A production quiz engine with MCQ, True/False, and short-answer scoring
+- A fully implemented 7-intent classifier matching the taxonomy `greeting`, `knowledge_query`, `multi_query`, `quiz_request`, `quiz_answer`, `completion_intent`, and `out_of_scope`
+
+When describing this repository externally, present those items as roadmap or legacy concepts unless you verify they are reintroduced into the active code path.
+
 ## Environment setup
 
 Copy `.env.example` to `.env` and fill in the values you use locally.

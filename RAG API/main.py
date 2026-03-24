@@ -18,6 +18,7 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
+from langchain_core.documents import Document
 from metadata import create_image_metadata, create_table_metadata, create_text_metadata, preprocess_metadata
 from PIL import Image
 from pydantic import BaseModel
@@ -274,7 +275,73 @@ def _filter_docs_by_filename(docs: list, filename: str | None) -> list:
     if not filename:
         return docs
     filtered = [doc for doc in docs if doc.metadata.get("filename") == filename]
-    return filtered or docs
+    return filtered
+
+
+def _normalize_filename_hint(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+
+
+def _detect_requested_filenames(index_name: str, query: str, explicit_filter: str | None) -> list[str]:
+    available_filenames = [
+        str(item.get("filename", "")).strip()
+        for item in get_document_category_store().list_documents(index_name)
+        if str(item.get("filename", "")).strip()
+    ]
+    if explicit_filter:
+        return [explicit_filter]
+
+    lowered_query = (query or "").lower()
+    normalized_query = _normalize_filename_hint(lowered_query)
+    matches: list[str] = []
+    for filename in available_filenames:
+        lowered_filename = filename.lower()
+        normalized_filename = _normalize_filename_hint(filename)
+        stem = Path(filename).stem.lower()
+        normalized_stem = _normalize_filename_hint(stem)
+        if (
+            lowered_filename in lowered_query
+            or (normalized_filename and normalized_filename in normalized_query)
+            or (normalized_stem and normalized_stem in normalized_query)
+        ):
+            matches.append(filename)
+    return list(dict.fromkeys(matches))
+
+
+def _load_docs_for_filenames(index_name: str, filenames: list[str], max_docs: int = 16) -> list[Document]:
+    if not filenames:
+        return []
+
+    documents_by_name = {
+        str(item.get("filename", "")).strip(): item
+        for item in get_document_category_store().list_documents(index_name)
+        if str(item.get("filename", "")).strip()
+    }
+    loaded_docs: list[Document] = []
+    for filename in filenames:
+        doc_ids = get_filename_index().get_doc_ids(index_name, filename)
+        if not doc_ids:
+            continue
+        contents = get_doc_store().mget(doc_ids[:max_docs])
+        doc_meta = documents_by_name.get(filename, {})
+        for position, content in enumerate(contents, start=1):
+            if not content:
+                continue
+            loaded_docs.append(
+                Document(
+                    page_content=content,
+                    metadata={
+                        "filename": filename,
+                        "document_id": filename,
+                        "section_id": f"{filename}:section:{position}",
+                        "source": doc_meta.get("storage_url", filename),
+                        "content_type": doc_meta.get("content_type", ""),
+                        "category": doc_meta.get("category", ""),
+                        "score": 1.0,
+                    },
+                )
+            )
+    return loaded_docs
 
 
 def _download_s3_object_to_temp(index_name: str, s3_key: str, content_type: str | None) -> tuple[str, bytes, str, str]:
@@ -783,7 +850,11 @@ def _ingest_local_file(
             delete_documents_by_filename(index_name, file_name)
             get_document_category_store().delete_document(index_name, file_name)
 
-        force_text_only_pdf = extension == ".pdf" and not is_limit_exempt_workspace(index_name) and page_count is not None and page_count > 20
+        force_text_only_pdf = extension == ".pdf" and page_count is not None and page_count > 20
+        if is_limit_exempt_workspace(index_name) and force_text_only_pdf:
+            warnings.append(
+                "Large PDF detected in the exception workspace. To improve reliability, this upload will use text-only processing and skip image/table extraction."
+            )
 
         if extension != ".pdf" or force_text_only_pdf:
             text_chunks = extract_text_chunks(local_path)
@@ -802,71 +873,95 @@ def _ingest_local_file(
             response["page_count"] = page_count
             return response
 
-        LOGGER.info("Preparing ingest temp_pdf_path=%s index_name=%s", local_path, index_name)
-        json_path = upload_pdf_and_download_json(local_path, 30, temp_pdf_pathbase, file_name, input_file_url)
-        create_index_if_not_exists(index_name)
+        try:
+            LOGGER.info("Preparing ingest temp_pdf_path=%s index_name=%s", local_path, index_name)
+            json_path = upload_pdf_and_download_json(local_path, 30, temp_pdf_pathbase, file_name, input_file_url)
+            create_index_if_not_exists(index_name)
 
-        with open(json_path, "r") as handle:
-            data = json.load(handle)
-        imageresult = extract_imageresult(data)
-        tableresult = extract_tableresult(data)
-        textresult = extract_textresult(data)
+            with open(json_path, "r") as handle:
+                data = json.load(handle)
+            imageresult = extract_imageresult(data)
+            tableresult = extract_tableresult(data)
+            textresult = extract_textresult(data)
 
-        sorted_keys = sorted(imageresult.keys(), key=int)
-        imageurl_list = [imageresult[key]["url"] for key in sorted_keys if "url" in imageresult[key]]
-        for idx, blob_url in enumerate(imageurl_list, start=1):
-            output_file_path = os.path.join(dynamic_output_dir, f"{idx}.png")
-            download_blob(AZURE_CONN_STRING, AZURE_CONTAINER_NAME, blob_url, output_file_path)
+            sorted_keys = sorted(imageresult.keys(), key=int)
+            imageurl_list = [imageresult[key]["url"] for key in sorted_keys if "url" in imageresult[key]]
+            for idx, blob_url in enumerate(imageurl_list, start=1):
+                output_file_path = os.path.join(dynamic_output_dir, f"{idx}.png")
+                download_blob(AZURE_CONN_STRING, AZURE_CONTAINER_NAME, blob_url, output_file_path)
 
-        img_base64_list, image_summaries = generate_img_summaries(dynamic_output_dir)
-        imageno = len(image_summaries)
+            img_base64_list, image_summaries = generate_img_summaries(dynamic_output_dir)
+            imageno = len(image_summaries)
 
-        texts_list = [textresult[key]["output"] for key in sorted(textresult.keys(), key=int) if "output" in textresult[key]]
-        table_list = [tableresult[key]["output"] for key in sorted(tableresult.keys(), key=int) if "output" in tableresult[key]]
-        text_summaries, table_summaries = generate_text_summaries(texts_list, table_list, summarize_texts=True)
-        tableno = len(table_summaries)
+            texts_list = [textresult[key]["output"] for key in sorted(textresult.keys(), key=int) if "output" in textresult[key]]
+            table_list = [tableresult[key]["output"] for key in sorted(tableresult.keys(), key=int) if "output" in tableresult[key]]
+            text_summaries, table_summaries = generate_text_summaries(texts_list, table_list, summarize_texts=True)
+            tableno = len(table_summaries)
 
-        image_metadata = create_image_metadata(imageresult, file_name, input_file_url)
-        table_metadata = create_table_metadata(tableresult, file_name, input_file_url)
-        text_metadata = create_text_metadata(textresult, file_name, input_file_url)
+            image_metadata = create_image_metadata(imageresult, file_name, input_file_url)
+            table_metadata = create_table_metadata(tableresult, file_name, input_file_url)
+            text_metadata = create_text_metadata(textresult, file_name, input_file_url)
 
-        vectorstore = get_vectorstore(index_name)
-        _, indexed_chunks = create_multi_vector_retriever(
-            vectorstore,
-            text_summaries,
-            texts_list,
-            text_metadata,
-            table_summaries,
-            table_list,
-            table_metadata,
-            image_summaries,
-            img_base64_list,
-            image_metadata,
-            file_name,
-            index_name,
-        )
-        get_metrics_collector().increment_documents_indexed(indexed_chunks)
-        category = _smart_infer_category(file_name, texts_list[:3])
-        get_document_category_store().upsert_document(
-            index_name=index_name,
-            filename=file_name,
-            category=category,
-            source_type="support_tickets" if category == "support_tickets" else "document",
-            content_type=content_type,
-            size_bytes=file_size,
-            storage_url=input_file_url,
-        )
-        return {
-            "status": "Index ingested successfully",
-            "index_name": index_name,
-            "imagecount": imageno,
-            "tablecount": tableno,
-            "category": category,
-            "content_type": content_type,
-            "warnings": warnings,
-            "processing_mode": "full_pdf",
-            "page_count": page_count,
-        }
+            vectorstore = get_vectorstore(index_name)
+            _, indexed_chunks = create_multi_vector_retriever(
+                vectorstore,
+                text_summaries,
+                texts_list,
+                text_metadata,
+                table_summaries,
+                table_list,
+                table_metadata,
+                image_summaries,
+                img_base64_list,
+                image_metadata,
+                file_name,
+                index_name,
+            )
+            get_metrics_collector().increment_documents_indexed(indexed_chunks)
+            category = _smart_infer_category(file_name, texts_list[:3])
+            get_document_category_store().upsert_document(
+                index_name=index_name,
+                filename=file_name,
+                category=category,
+                source_type="support_tickets" if category == "support_tickets" else "document",
+                content_type=content_type,
+                size_bytes=file_size,
+                storage_url=input_file_url,
+            )
+            return {
+                "status": "Index ingested successfully",
+                "index_name": index_name,
+                "imagecount": imageno,
+                "tablecount": tableno,
+                "category": category,
+                "content_type": content_type,
+                "warnings": warnings,
+                "processing_mode": "full_pdf",
+                "page_count": page_count,
+            }
+        except Exception:
+            LOGGER.exception("Full PDF extraction failed for %s in %s. Falling back to text-only processing.", file_name, index_name)
+            text_chunks = extract_text_chunks(local_path)
+            if not text_chunks:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Could not process this PDF with either full extraction or text-only fallback. The file may be image-only, corrupted, or unsupported.",
+                )
+            warnings.append(
+                "Full PDF extraction was unavailable for this file, so the upload fell back to text-only processing."
+            )
+            response = _index_text_document(
+                index_name=index_name,
+                file_name=file_name,
+                input_file_url=input_file_url,
+                content_type=content_type,
+                file_size=file_size,
+                text_chunks=text_chunks,
+            )
+            response["warnings"] = warnings
+            response["processing_mode"] = "text_only_fallback"
+            response["page_count"] = page_count
+            return response
     finally:
         if dynamic_output_dir and os.path.exists(dynamic_output_dir):
             shutil.rmtree(dynamic_output_dir)
@@ -1118,6 +1213,44 @@ async def ingest_status(job_id: str):
     return job
 
 
+FEEDBACK_TO_EMAIL = "dhairya.jindani@htcinc.com"
+
+
+def _send_feedback_email(user_id: str, workspace_id: str, feedback: str) -> None:
+    import smtplib
+    from email.mime.text import MIMEText
+
+    smtp_host = os.getenv("SMTP_HOST", "")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_pass = os.getenv("SMTP_PASS", "")
+
+    if not smtp_host or not smtp_user:
+        LOGGER.warning("SMTP not configured — skipping feedback email")
+        return
+
+    body = (
+        f"New feedback received for RAG Demo.\n\n"
+        f"From: {user_id}\n"
+        f"Workspace: {workspace_id}\n\n"
+        f"Feedback:\n{feedback}"
+    )
+    msg = MIMEText(body)
+    msg["Subject"] = f"RAG Demo Feedback from {user_id}"
+    msg["From"] = smtp_user
+    msg["To"] = FEEDBACK_TO_EMAIL
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, [FEEDBACK_TO_EMAIL], msg.as_string())
+        LOGGER.info("Feedback email sent to %s from %s", FEEDBACK_TO_EMAIL, user_id)
+    except Exception:
+        LOGGER.exception("Failed to send feedback email")
+
+
 @app.post("/SFRAG/feedback")
 async def submit_feedback(request: FeedbackRequest):
     workspace_id = _validate_index_name(request.workspace_id)
@@ -1132,6 +1265,7 @@ async def submit_feedback(request: FeedbackRequest):
         workspace_id=workspace_id,
         feedback=feedback[:4000],
     )
+    _send_feedback_email(user_id=user_id[:120], workspace_id=workspace_id, feedback=feedback[:4000])
     return {"status": "submitted", "item": item}
 
 
@@ -1339,9 +1473,20 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
             )
         return JSONResponse(content=direct_response)
 
+    requested_filenames = _detect_requested_filenames(
+        query_request.index_name,
+        query_request.user_query,
+        query_request.document_filter,
+    )
+
     if cache_manager:
         cache_key = cache_manager.build_cache_key(
-            query=f"{query_request.user_query}|selected_category={query_request.selected_category or ''}",
+            query=(
+                f"{query_request.user_query}"
+                f"|selected_category={query_request.selected_category or ''}"
+                f"|document_filter={query_request.document_filter or ''}"
+                f"|filenames={','.join(requested_filenames)}"
+            ),
             retrieval_k=int(config.get("retrieval_k", 5)),
             index_name=query_request.index_name,
             model_name=config.get("llm_model", ""),
@@ -1396,12 +1541,20 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
     chain = multi_modal_rag_chain_with_history(ensemble)
     LOGGER.info("Built multimodal chain for session_id=%s", query_request.session_id)
     prepared_context = await chain.prepare_context(query_request.user_query, query_request.session_id)
-    retrieved_docs = _filter_docs_by_category(
-        query_request.index_name,
-        prepared_context["docs"],
-        requested_category,
-    )
-    retrieved_docs = _filter_docs_by_filename(retrieved_docs, query_request.document_filter)
+    direct_filename_docs = _load_docs_for_filenames(query_request.index_name, requested_filenames)
+    if direct_filename_docs:
+        retrieved_docs = direct_filename_docs
+    else:
+        retrieved_docs = _filter_docs_by_category(
+            query_request.index_name,
+            prepared_context["docs"],
+            requested_category,
+        )
+        if requested_filenames:
+            allowed_filenames = set(requested_filenames)
+            retrieved_docs = [doc for doc in retrieved_docs if doc.metadata.get("filename") in allowed_filenames]
+        else:
+            retrieved_docs = _filter_docs_by_filename(retrieved_docs, query_request.document_filter)
     prepared_context["docs"] = retrieved_docs
     processed_metadata = preprocess_metadata(retrieved_docs)
     citations_task = asyncio.create_task(
@@ -1821,4 +1974,3 @@ async def query_analytics(request: AnalyticsQueryRequest):
 @app.post("/SFRAG/analytics/chat")
 async def chat_analytics(request: AnalyticsQueryRequest):
     return await query_analytics(request)
-

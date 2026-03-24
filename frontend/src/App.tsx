@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -10,6 +10,7 @@ type Message = {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  citations?: Array<{ pdf_url?: string; filename?: string }>
 }
 
 type Thread = {
@@ -41,6 +42,18 @@ type DocumentRecord = {
   updated_at: number
 }
 
+type UploadResultBanner = {
+  filename: string
+  category: string
+  status: 'indexed'
+}
+
+type UploadProgressState = {
+  phase: 'idle' | 'selected' | 'uploading' | 'indexed' | 'failed'
+  filename?: string
+  message?: string
+}
+
 type RetrievalResponse = {
   mode: 'answer' | 'clarify'
   response: { content: string }
@@ -55,23 +68,18 @@ type RetrievalResponse = {
   }
 }
 
-type PresignedUploadResponse = {
-  url: string
-  fields: Record<string, string>
-  bucket: string
-  object_key: string
-}
-
-type IngestJobResponse = {
-  job_id: string
+type DirectIngestResponse = {
   status: string
-  result?: {
-    category?: string
-    warnings?: string[]
-    processing_mode?: string
-    page_count?: number
-  }
-  error?: string
+  index_name?: string
+  imagecount?: number
+  tablecount?: number
+  category?: string
+  content_type?: string
+  warnings?: string[]
+  processing_mode?: string
+  page_count?: number
+  message?: string
+  detail?: string
 }
 
 type FeedbackResponse = {
@@ -124,6 +132,12 @@ const THEME_KEY = 'rag-demo-theme'
 const AUTH_SESSION_KEY = 'rag-demo-auth-session'
 const ANALYTICS_HISTORY_KEY = 'rag-analytics-history'
 
+type ChatStarter = {
+  label: string
+  prompt: string
+  documentFilter?: string | null
+}
+
 function normalizeWorkspace(value: string): string {
   const normalized = value
     .trim()
@@ -150,6 +164,17 @@ function nowIso(): string {
   return new Date().toISOString()
 }
 
+async function readErrorMessage(response: Response): Promise<string> {
+  const text = await response.text()
+  if (!text) return `Request failed: ${response.status}`
+  try {
+    const parsed = JSON.parse(text) as { detail?: string; message?: string; error?: string }
+    return parsed.detail || parsed.message || parsed.error || text
+  } catch {
+    return text
+  }
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -172,8 +197,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     headers,
   })
   if (!response.ok) {
-    const text = await response.text()
-    throw new Error(text || `Request failed: ${response.status}`)
+    throw new Error(await readErrorMessage(response))
   }
   return response.json() as Promise<T>
 }
@@ -199,6 +223,217 @@ function formatTimestamp(value: string): string {
   return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
+function normalizeUploadExtension(filename: string): string {
+  const match = filename.toLowerCase().match(/\.[^.]+$/)
+  return match?.[0] ?? ''
+}
+
+function buildUploadFailureMessage(file: File, uploadPolicy: UploadPolicy | null, error: unknown): string {
+  const extension = normalizeUploadExtension(file.name)
+  const supportedTypes = uploadPolicy?.supported_types?.map((item) => `.${item.toLowerCase()}`) ?? ['.pdf', '.txt', '.docx', '.xlsx']
+  const maxUploadMb = uploadPolicy?.max_upload_mb ?? 5
+
+  if (!supportedTypes.includes(extension)) {
+    return `Upload failed: ${extension || 'This file type'} is not supported. Allowed types: ${supportedTypes.join(', ')}.`
+  }
+
+  if (file.size > maxUploadMb * 1024 * 1024) {
+    return `Upload failed: ${file.name} exceeds the ${maxUploadMb} MB workspace limit. Please use a smaller file.`
+  }
+
+  if (
+    uploadPolicy?.workspace_document_limit &&
+    uploadPolicy.workspace_document_count >= uploadPolicy.workspace_document_limit
+  ) {
+    return `Upload failed: this workspace already has ${uploadPolicy.workspace_document_limit} indexed documents. Delete an older file or switch to a new workspace.`
+  }
+
+  const rawMessage = error instanceof Error ? error.message : 'Upload failed.'
+  const normalized = rawMessage.toLowerCase()
+
+  if (!navigator.onLine) {
+    return 'Upload failed because your browser appears to be offline. Reconnect to the network and try again.'
+  }
+
+  if (normalized.includes('unauthorized') || normalized.includes('401')) {
+    return 'Upload failed because your session is no longer authorized. Please sign in again and retry the upload.'
+  }
+
+  if (normalized.includes('failed to fetch') || normalized.includes('networkerror')) {
+    return 'Upload failed because the app could not reach the upload service. This is usually a network issue, expired session, CORS block, or backend timeout. Please retry, and if it persists, sign in again.'
+  }
+
+  if (normalized.includes('unsupported file type') || normalized.includes('unexpected content type')) {
+    return rawMessage
+  }
+
+  if (normalized.includes('workspace document limit') || normalized.includes('page limit') || normalized.includes('exceeds')) {
+    return rawMessage
+  }
+
+  return rawMessage
+}
+
+function buildGreeting(workspaceType: 'personal' | 'shared' | 'snow'): Message {
+  const content =
+    workspaceType === 'snow'
+      ? 'Hello. You are in the ServiceNow workspace. Ask about recurring incidents, priorities, assignment groups, SLA patterns, or request a quick ticket summary.'
+      : workspaceType === 'shared'
+        ? 'Hello. You are in the shared demo workspace. Ask for a summary, key themes, policy details, or evidence-backed answers from the indexed documents.'
+        : 'Hello. Upload a document or ask a question about your current workspace. If you are not sure where to begin, start with a quick summary of the uploaded documents.'
+
+  return { role: 'assistant', content, timestamp: nowIso() }
+}
+
+function normalizeDocumentHint(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
+function pickPreferredDocument(documents: DocumentRecord[], preferredFilename?: string | null): DocumentRecord | null {
+  if (preferredFilename) {
+    const matched = documents.find((document) => document.filename === preferredFilename)
+    if (matched) return matched
+  }
+  if (documents.length === 0) return null
+  return [...documents].sort((left, right) => (right.updated_at ?? 0) - (left.updated_at ?? 0))[0]
+}
+
+function inferDocumentFilter(
+  prompt: string,
+  documents: DocumentRecord[],
+  preferredFilename?: string | null,
+): string | null {
+  const loweredPrompt = prompt.toLowerCase()
+  const normalizedPrompt = normalizeDocumentHint(prompt)
+  for (const document of documents) {
+    const loweredFilename = document.filename.toLowerCase()
+    const normalizedFilename = normalizeDocumentHint(document.filename)
+    const normalizedStem = normalizeDocumentHint(document.filename.replace(/\.[^.]+$/, ''))
+    if (
+      loweredFilename.includes(loweredPrompt)
+      || loweredPrompt.includes(loweredFilename)
+      || (normalizedFilename && normalizedPrompt.includes(normalizedFilename))
+      || (normalizedStem && normalizedPrompt.includes(normalizedStem))
+    ) {
+      return document.filename
+    }
+  }
+
+  const preferredDocument = pickPreferredDocument(documents, preferredFilename)
+  if (!preferredDocument) return null
+  if (
+    loweredPrompt.includes('uploaded document')
+    || loweredPrompt.includes('uploaded pdf')
+    || loweredPrompt.includes('uploaded file')
+    || loweredPrompt.includes('uploaded documents')
+    || loweredPrompt.includes('this document')
+    || loweredPrompt.includes('this pdf')
+    || loweredPrompt.includes('policy name')
+    || loweredPrompt.includes('summarize')
+  ) {
+    return preferredDocument.filename
+  }
+  return null
+}
+
+function summarizePrompt(
+  workspaceType: 'personal' | 'shared' | 'snow',
+  documents: DocumentRecord[],
+  preferredFilename?: string | null,
+): string {
+  if (workspaceType === 'snow') {
+    return 'Summarize the ServiceNow ticket dataset with top categories, priorities, assignment groups, and recurring issues.'
+  }
+  const preferredDocument = pickPreferredDocument(documents, preferredFilename)
+  if (preferredDocument) {
+    return `Summarize the document "${preferredDocument.filename}" and highlight the top takeaways, risks, and recommended next steps.`
+  }
+  const names = documents.map((document) => document.filename).filter(Boolean)
+  if (names.length === 1) {
+    return `Summarize the document "${names[0]}" and highlight the top takeaways, risks, and recommended next steps.`
+  }
+  if (names.length > 1) {
+    return `Summarize these uploaded documents: ${names.join(', ')}. Highlight the top takeaways, risks, and recommended next steps for each document.`
+  }
+  return 'Summarize the uploaded documents in this workspace and highlight the top takeaways, risks, and recommended next steps.'
+}
+
+function buildChatStarters(
+  workspaceType: 'personal' | 'shared' | 'snow',
+  documents: DocumentRecord[],
+  preferredFilename?: string | null,
+): ChatStarter[] {
+  if (workspaceType === 'snow') {
+    return [
+      {
+        label: 'Dataset summary',
+        prompt: 'Summarize the ServiceNow ticket dataset with top categories, priorities, and recurring issues.',
+      },
+      {
+        label: 'Recurring issues',
+        prompt: 'What are the top recurring incident patterns in the ServiceNow tickets?',
+      },
+      {
+        label: 'Assignment groups',
+        prompt: 'Show the main assignment groups and the types of tickets they handle most often.',
+      },
+    ]
+  }
+
+  const preferredDocument = pickPreferredDocument(documents, preferredFilename)
+  if (preferredDocument) {
+    const filename = preferredDocument.filename
+    return [
+      {
+        label: 'Summarize document',
+        prompt: `Summarize the document "${filename}" and highlight the top takeaways.`,
+        documentFilter: filename,
+      },
+      {
+        label: 'Key topics',
+        prompt: `What are the key topics covered in the document "${filename}"?`,
+        documentFilter: filename,
+      },
+      {
+        label: 'Risks and actions',
+        prompt: `List the most important risks, actions, or next steps mentioned in the document "${filename}".`,
+        documentFilter: filename,
+      },
+    ]
+  }
+
+  const names = documents.map((document) => document.filename).filter(Boolean)
+  if (names.length > 1) {
+    const joined = names.join(', ')
+    return [
+      {
+        label: 'Summarize docs',
+        prompt: `Summarize these uploaded documents: ${joined}. Highlight the top takeaways from each document.`,
+      },
+      {
+        label: 'Key topics',
+        prompt: `What are the key topics covered across these uploaded documents: ${joined}?`,
+      },
+      {
+        label: 'Compare documents',
+        prompt: `Compare these uploaded documents: ${joined}. Show the main themes, risks, and recommended actions from each one.`,
+      },
+    ]
+  }
+
+  return workspaceType === 'shared'
+    ? [
+        { label: 'Shared summary', prompt: 'Summarize the shared demo documents and highlight the top takeaways.' },
+        { label: 'Main topics', prompt: 'What are the main topics covered in the shared knowledge base?' },
+        { label: 'Where to start', prompt: 'Which sections should I read first for a quick understanding?' },
+      ]
+    : [
+        { label: 'Summarize docs', prompt: 'Summarize the uploaded documents and highlight the top takeaways.' },
+        { label: 'Key topics', prompt: 'What are the key topics covered in the uploaded documents?' },
+        { label: 'Risks and actions', prompt: 'List the most important risks, actions, or next steps from the uploaded files.' },
+      ]
+}
+
 function App() {
   const [authSession, setAuthSession] = useState<AuthSession | null>(null)
   const [loginUsername, setLoginUsername] = useState('')
@@ -215,10 +450,12 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [question, setQuestion] = useState('')
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
+  const [lastUploadResult, setLastUploadResult] = useState<UploadResultBanner | null>(null)
   const [categories, setCategories] = useState<CategorySummary[]>([])
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressState>({ phase: 'idle' })
   const [chatImageFile, setChatImageFile] = useState<File | null>(null)
   const [feedbackUserId, setFeedbackUserId] = useState('')
   const [feedbackText, setFeedbackText] = useState('')
@@ -252,6 +489,14 @@ function App() {
   const isSharedWorkspace = activeWorkspace === 'shared'
   const isSnowWorkspace = activeWorkspace === 'snow'
   const isReadOnlyWorkspace = isSharedWorkspace || isSnowWorkspace
+  const preferredDocument = useMemo(
+    () => pickPreferredDocument(documents, lastUploadResult?.filename ?? null),
+    [documents, lastUploadResult],
+  )
+  const chatStarterPrompts = useMemo(
+    () => buildChatStarters(activeWorkspace, documents, preferredDocument?.filename ?? null),
+    [activeWorkspace, documents, preferredDocument],
+  )
   const sortedThreads = useMemo(
     () =>
       [...threads].sort(
@@ -290,30 +535,31 @@ function App() {
     localStorage.setItem(PERSONAL_WORKSPACES_KEY, JSON.stringify(next))
   }
 
-  async function refreshThreads(workspaceId = indexName) {
+  const refreshThreads = useCallback(async (workspaceId = indexName) => {
     const data = await apiFetch<{ threads: Thread[] }>(
       `/SFRAG/threads?workspace_id=${encodeURIComponent(workspaceId)}`,
     )
     setThreads(data.threads)
     return data.threads
-  }
+  }, [indexName])
 
-  async function refreshDocuments(workspaceId = indexName) {
+  const refreshDocuments = useCallback(async (workspaceId = indexName) => {
     const [documentResponse, categoryResponse] = await Promise.all([
       apiFetch<{ documents: DocumentRecord[] }>(`/SFRAG/documents/${workspaceId}`),
       apiFetch<{ categories: CategorySummary[] }>(`/SFRAG/categories/${workspaceId}`),
     ])
     setDocuments(documentResponse.documents)
     setCategories(categoryResponse.categories)
-  }
+    return documentResponse.documents
+  }, [indexName])
 
-  async function refreshUploadPolicy(workspaceId = indexName) {
+  const refreshUploadPolicy = useCallback(async (workspaceId = indexName) => {
     const policy = await apiFetch<UploadPolicy>(`/SFRAG/upload-policy/${workspaceId}`)
     setUploadPolicy(policy)
     return policy
-  }
+  }, [indexName])
 
-  function resetWorkspaceState() {
+  const resetWorkspaceState = useCallback(() => {
     setThreads([])
     setActiveThreadId(null)
     setSessionId('')
@@ -322,12 +568,13 @@ function App() {
     setPendingQuestion(null)
     setQuestion('')
     setUploadFile(null)
+    setUploadProgress({ phase: 'idle' })
     setUploadPolicyNotices([])
     setOpenMenuThreadId(null)
     setConfirmDeleteThreadId(null)
     setOpenWorkspaceMenuId(null)
     setConfirmDeleteWorkspaceId(null)
-  }
+  }, [])
 
   async function ensureThread(questionSeed?: string): Promise<{ threadId: string; sessionId: string }> {
     if (activeThreadId && sessionId) {
@@ -359,6 +606,7 @@ function App() {
       })
       setActiveThreadId(created.thread_id)
       setSessionId(created.session_id)
+      setMessages([buildGreeting(activeWorkspace)])
       await refreshThreads(indexName)
       pushToast('New chat started.', 'success')
     } catch (error) {
@@ -386,32 +634,42 @@ function App() {
     commitWorkspaceSelection(generateWorkspaceName())
   }
 
-  async function openThread(threadId: string) {
+  const openThread = useCallback(async (threadId: string) => {
     const thread = await apiFetch<Thread>(
       `/SFRAG/threads/${threadId}?workspace_id=${encodeURIComponent(indexName)}`,
     )
     setActiveThreadId(threadId)
     setSessionId(thread.metadata?.session_id ?? '')
-    setMessages(mapStepsToMessages(thread))
+    const mapped = mapStepsToMessages(thread)
+    setMessages(mapped.length > 0 ? mapped : [buildGreeting(activeWorkspace)])
     setPendingQuestion(null)
     setOpenMenuThreadId(null)
     setConfirmDeleteThreadId(null)
-  }
+  }, [activeWorkspace, indexName])
 
   async function handleDeleteThread(threadId: string) {
-    await apiFetch(`/SFRAG/threads/${threadId}?workspace_id=${encodeURIComponent(indexName)}`, { method: 'DELETE' })
+    try {
+      await apiFetch(`/SFRAG/threads/${threadId}?workspace_id=${encodeURIComponent(indexName)}`, { method: 'DELETE' })
+    } catch {
+      await apiFetch(`/SFRAG/threads/${threadId}`, { method: 'DELETE' })
+    }
     setOpenMenuThreadId(null)
     setConfirmDeleteThreadId(null)
-    const updated = await refreshThreads(indexName)
+    const remainingThreads = threads.filter((thread) => thread.id !== threadId)
+    setThreads(remainingThreads)
     if (activeThreadId === threadId) {
-      setActiveThreadId(updated[0]?.id ?? null)
-      if (updated[0]?.id) {
-        await openThread(updated[0].id)
+      const nextThread = remainingThreads[0]
+      setActiveThreadId(nextThread?.id ?? null)
+      if (nextThread?.id) {
+        await openThread(nextThread.id)
       } else {
-        setMessages([])
+        setMessages([buildGreeting(activeWorkspace)])
         setSessionId('')
       }
     }
+    window.setTimeout(() => {
+      void refreshThreads(indexName)
+    }, 2500)
     pushToast('Chat deleted.', 'success')
   }
 
@@ -492,9 +750,22 @@ function App() {
     return () => document.removeEventListener('mousedown', onDocumentClick)
   }, [])
 
-  async function handleSend(rawQuestion?: string, forcedCategory?: string | null) {
+  async function handleSend(rawQuestion?: string, forcedCategory?: string | null, documentFilter?: string | null) {
     const finalQuestion = (rawQuestion ?? question).trim()
     if (!finalQuestion && !chatImageFile) return
+    const inferredDocumentFilter = documentFilter ?? inferDocumentFilter(finalQuestion, documents, preferredDocument?.filename ?? null)
+    const retrievalQuestion =
+      !isSnowWorkspace && inferredDocumentFilter && !finalQuestion.toLowerCase().includes(inferredDocumentFilter.toLowerCase())
+        ? `For the document "${inferredDocumentFilter}", answer this question: ${finalQuestion}`
+        : finalQuestion
+    if (!isSnowWorkspace && documents.length === 0) {
+      pushToast('Upload and index a document first, then ask your question.', 'info')
+      setMessages((current) => {
+        if (current.length > 0) return current
+        return [buildGreeting(activeWorkspace)]
+      })
+      return
+    }
     try {
       setBusy(true)
       setLoadingMessage(chatImageFile ? `Analyzing image in ${indexName}...` : `Searching ${indexName}...`)
@@ -524,11 +795,12 @@ function App() {
         payload = await apiFetch<RetrievalResponse>('/SFRAG/retrieval', {
           method: 'POST',
           body: JSON.stringify({
-            user_query: finalQuestion,
+            user_query: retrievalQuestion,
             index_name: indexName,
             session_id: currentSessionId,
             thread_id: threadId,
             selected_category: forcedCategory ?? selectedCategory,
+            document_filter: inferredDocumentFilter ?? undefined,
           }),
         })
       }
@@ -537,7 +809,12 @@ function App() {
         setPendingQuestion(payload.image_query?.retrieval_query ?? finalQuestion)
         setMessages((current) => [
           ...current,
-          { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
+          {
+            role: 'assistant',
+            content: payload.response.content,
+            timestamp: nowIso(),
+            citations: payload.citation ?? [],
+          },
         ])
         setCategories(payload.categories ?? categories)
         pushToast('Multiple categories found. Pick one to continue.', 'info')
@@ -546,7 +823,12 @@ function App() {
         setSelectedCategory(payload.selected_category ?? forcedCategory ?? null)
         setMessages((current) => [
           ...current,
-          { role: 'assistant', content: payload.response.content, timestamp: nowIso() },
+          {
+            role: 'assistant',
+            content: payload.response.content,
+            timestamp: nowIso(),
+            citations: payload.citation ?? [],
+          },
         ])
         if (payload.image_query?.retrieval_query && chatImageFile) {
           pushToast(`Image routed as: ${payload.image_query.retrieval_query}`, 'info')
@@ -565,87 +847,85 @@ function App() {
     }
   }
 
+  async function handleStarterPrompt(prompt: string, documentFilter?: string | null) {
+    setQuestion(prompt)
+    await handleSend(prompt, null, documentFilter)
+  }
+
   async function performUpload() {
     if (!uploadFile || isReadOnlyWorkspace) return
+    const pendingFile = uploadFile
     try {
       setBusy(true)
-      setLoadingMessage(`Uploading ${uploadFile.name}...`)
-      const presign = await apiFetch<PresignedUploadResponse>('/SFRAG/uploads/presign', {
-        method: 'POST',
-        body: JSON.stringify({
-          index_name: indexName,
-          filename: uploadFile.name,
-          content_type: uploadFile.type || 'application/octet-stream',
-        }),
+      setUploadProgress({
+        phase: 'uploading',
+        filename: pendingFile.name,
+        message: 'Uploading and indexing document...',
       })
-      const uploadForm = new FormData()
-      Object.entries(presign.fields).forEach(([key, value]) => uploadForm.append(key, value))
-      uploadForm.append('Content-Type', uploadFile.type || 'application/octet-stream')
-      uploadForm.append('file', uploadFile)
-      const uploadResponse = await fetch(presign.url, {
+      setLoadingMessage(`Uploading ${pendingFile.name}...`)
+      const ingestForm = new FormData()
+      ingestForm.append('index_name', indexName)
+      ingestForm.append('file', pendingFile)
+      const ingestResponse = await apiFetch<DirectIngestResponse>('/SFRAG/ingest', {
         method: 'POST',
-        body: uploadForm,
+        body: ingestForm,
       })
-      if (!uploadResponse.ok) {
-        throw new Error('S3 upload failed.')
-      }
-      const job = await apiFetch<IngestJobResponse>('/SFRAG/ingest-async', {
-        method: 'POST',
-        body: JSON.stringify({
-          index_name: indexName,
-          s3_key: presign.object_key,
-          content_type: uploadFile.type || 'application/octet-stream',
-        }),
-      })
-
-      let finalJob = job
-      for (let attempt = 0; attempt < 12; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 1000))
-        finalJob = await apiFetch<IngestJobResponse>(`/SFRAG/ingest-status/${job.job_id}`)
-        if (finalJob.status === 'completed') break
-        if (finalJob.status === 'failed') {
-          throw new Error(finalJob.error || 'Ingest job failed.')
-        }
-      }
-
-      if (finalJob.status !== 'completed') {
-        throw new Error('Ingest job did not complete in time.')
+      if (ingestResponse.status === 'Error') {
+        throw new Error(ingestResponse.detail || ingestResponse.message || 'Upload failed.')
       }
       setUploadFile(null)
-      await refreshDocuments(indexName)
+      const refreshedDocuments = await refreshDocuments(indexName)
       await refreshUploadPolicy(indexName)
-      setUploadPolicyNotices(finalJob.result?.warnings ?? [])
+      setUploadPolicyNotices(ingestResponse.warnings ?? [])
+      setLastUploadResult({
+        filename: pendingFile.name,
+        category: ingestResponse.category ?? 'uncategorized',
+        status: 'indexed',
+      })
+      setUploadProgress({
+        phase: 'indexed',
+        filename: pendingFile.name,
+        message: 'Document uploaded and indexed successfully.',
+      })
+      if (!refreshedDocuments.some((document) => document.filename === pendingFile.name)) {
+        setDocuments((current) => [
+          {
+            filename: pendingFile.name,
+            category: ingestResponse.category ?? 'uncategorized',
+            content_type: pendingFile.type || 'application/octet-stream',
+            size_bytes: pendingFile.size,
+            updated_at: Math.floor(Date.now() / 1000),
+          },
+          ...current.filter((document) => document.filename !== pendingFile.name),
+        ])
+        window.setTimeout(() => {
+          void refreshDocuments(indexName)
+        }, 2500)
+      }
+      setDocumentsOpen(true)
+      setMessages((current) => [
+        ...current,
+        {
+          role: 'assistant',
+          content: `Uploaded and indexed "${pendingFile.name}" successfully under category "${ingestResponse.category ?? 'uncategorized'}". You can now ask questions about this document or use "Summarize docs".`,
+          timestamp: nowIso(),
+        },
+      ])
       pushToast(
-        `Indexed ${uploadFile.name} as ${finalJob.result?.category ?? 'uncategorized'}.`,
+        `Indexed ${pendingFile.name} as ${ingestResponse.category ?? 'uncategorized'}.`,
         'success',
       )
-      for (const warning of finalJob.result?.warnings ?? []) {
+      for (const warning of ingestResponse.warnings ?? []) {
         pushToast(warning, 'info')
       }
     } catch (error) {
-      try {
-        const fallbackForm = new FormData()
-        fallbackForm.append('index_name', indexName)
-        fallbackForm.append('file', uploadFile)
-        const fallbackResponse = await fetch(`${API_BASE_URL}/SFRAG/ingest`, {
-          method: 'POST',
-          body: fallbackForm,
-        })
-        const fallbackPayload = await fallbackResponse.json()
-        if (!fallbackResponse.ok || fallbackPayload.status === 'Error') {
-          throw new Error(fallbackPayload.detail || fallbackPayload.message || 'Upload failed.')
-        }
-        setUploadFile(null)
-        await refreshDocuments(indexName)
-        await refreshUploadPolicy(indexName)
-        setUploadPolicyNotices(fallbackPayload.warnings ?? [])
-        pushToast(`Indexed ${uploadFile.name} as ${fallbackPayload.category}.`, 'success')
-        for (const warning of fallbackPayload.warnings ?? []) {
-          pushToast(warning, 'info')
-        }
-      } catch (fallbackError) {
-        pushToast(fallbackError instanceof Error ? fallbackError.message : String(error), 'error')
-      }
+      const failureMessage = buildUploadFailureMessage(pendingFile, uploadPolicy, error)
+      setUploadProgress({
+        phase: 'failed',
+        filename: pendingFile.name,
+        message: failureMessage,
+      })
+      pushToast(failureMessage, 'error')
     } finally {
       setBusy(false)
       setLoadingMessage('Ready')
@@ -676,7 +956,7 @@ function App() {
       })
       localStorage.setItem(FEEDBACK_USER_KEY, feedbackUserId.trim())
       setFeedbackText('')
-      pushToast('Feedback submitted. Thank you.', 'success')
+      pushToast('Feedback sent to dhairya.jindani@htcinc.com. Thank you.', 'success')
     } catch (error) {
       pushToast(error instanceof Error ? error.message : 'Feedback submission failed.', 'error')
     } finally {
@@ -725,11 +1005,13 @@ function App() {
     void refreshThreads(indexName).then((loaded) => {
       if (loaded[0]?.id) {
         void openThread(loaded[0].id)
+      } else {
+        setMessages([buildGreeting(activeWorkspace)])
       }
     })
     void refreshDocuments(indexName)
     void refreshUploadPolicy(indexName)
-  }, [indexName])
+  }, [indexName, activeWorkspace, openThread, refreshDocuments, refreshThreads, refreshUploadPolicy, resetWorkspaceState])
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -804,7 +1086,7 @@ function App() {
           <img className="brand-logo auth-logo" src={logoSrc} alt="RAG demo logo" />
           <p className="eyebrow">Secure Access</p>
           <h1>RAG Demo Login</h1>
-          <p className="helper-text">Use one of the approved demo credentials to access chat and analytics.</p>
+          <p className="helper-text">Sign in to access the chat, analytics, and agent workflows.</p>
           <label className="field">
             <span>Username</span>
             <input value={loginUsername} onChange={(event) => setLoginUsername(event.target.value)} />
@@ -817,10 +1099,6 @@ function App() {
           <button className="primary-button auth-submit" type="submit" disabled={busy || !loginUsername || !loginPassword}>
             {busy ? 'Signing in...' : 'Sign in'}
           </button>
-          <div className="auth-hints">
-            <small>`HTC_admin / admin123`</small>
-            <small>`HTC_user / user123`</small>
-          </div>
         </form>
       </div>
     )
@@ -1187,21 +1465,86 @@ function App() {
                     ))}
                   </div>
                 ) : null}
+                {lastUploadResult ? (
+                  <div className="upload-success-banner">
+                    <strong>{lastUploadResult.filename}</strong>
+                    <span>Indexed successfully</span>
+                    <small>Category: {lastUploadResult.category}</small>
+                  </div>
+                ) : null}
+                {uploadProgress.phase !== 'idle' && uploadProgress.phase !== 'indexed' ? (
+                  <div className={`upload-status-banner phase-${uploadProgress.phase}`}>
+                    <strong>{uploadProgress.filename}</strong>
+                    <span>{uploadProgress.message}</span>
+                  </div>
+                ) : null}
               </div>
               <form className="upload-form" onSubmit={(event) => void handleUpload(event)}>
                 <input
                   type="file"
                   accept=".pdf,.txt,.docx,.xlsx"
-                  disabled={isReadOnlyWorkspace}
-                  onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)}
+                  disabled={isReadOnlyWorkspace || busy || uploadProgress.phase === 'uploading'}
+                  onChange={(event) => {
+                    const nextFile = event.target.files?.[0] ?? null
+                    setUploadFile(nextFile)
+                    setLastUploadResult(null)
+                    setUploadProgress(
+                      nextFile
+                        ? {
+                            phase: 'selected',
+                            filename: nextFile.name,
+                            message: 'File selected. Click Upload and confirm to index it for RAG.',
+                          }
+                        : { phase: 'idle' },
+                    )
+                  }}
                 />
-                <button type="submit" disabled={busy || !uploadFile || isReadOnlyWorkspace}>
-                  {busy ? 'Working...' : isReadOnlyWorkspace ? 'Read-only' : 'Upload'}
-                </button>
+                <div className="upload-actions">
+                  <button
+                    type="button"
+                    className="ghost-button compact-action"
+                    disabled={busy || uploadProgress.phase === 'uploading' || (!isSnowWorkspace && documents.length === 0)}
+                    onClick={() =>
+                      void handleStarterPrompt(
+                        summarizePrompt(activeWorkspace, documents, preferredDocument?.filename ?? null),
+                        !isSnowWorkspace ? preferredDocument?.filename ?? null : null,
+                      )
+                    }
+                  >
+                    {isSnowWorkspace ? 'Summarize data' : 'Summarize docs'}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={busy || uploadProgress.phase === 'uploading' || !uploadFile || isReadOnlyWorkspace}
+                  >
+                    {uploadProgress.phase === 'uploading'
+                      ? 'Uploading...'
+                      : busy
+                        ? 'Working...'
+                        : isReadOnlyWorkspace
+                          ? 'Read-only'
+                          : 'Upload'}
+                  </button>
+                </div>
               </form>
             </section>
             <section className="content-grid">
               <div className="chat-card">
+                <div className="chat-starters">
+                  <span className="chat-starters-label">Frequent queries:</span>
+                  {chatStarterPrompts.map((starter) => (
+                    <button
+                      key={starter.label}
+                      type="button"
+                      className="chip"
+                      onClick={() => void handleStarterPrompt(starter.prompt, starter.documentFilter)}
+                      disabled={busy || (!isSnowWorkspace && documents.length === 0)}
+                      title={starter.prompt}
+                    >
+                      {starter.label}
+                    </button>
+                  ))}
+                </div>
                 <div className="chat-log" ref={chatLogRef}>
                   {busy && messages.length === 0 ? (
                     <div className="chat-skeleton">
@@ -1241,6 +1584,32 @@ function App() {
                           ) : (
                             <p>{message.content}</p>
                           )}
+                          {message.role === 'assistant' && message.citations && message.citations.length > 0 ? (
+                            <div className="bubble-sources">
+                              <span className="bubble-sources-label">Sources</span>
+                              <div className="bubble-source-list">
+                                {message.citations.map((citation, citationIndex) => {
+                                  const label = citation.filename || citation.pdf_url || `Source ${citationIndex + 1}`
+                                  const href = citation.pdf_url && citation.pdf_url !== 'N/A' ? citation.pdf_url : undefined
+                                  return href ? (
+                                    <a
+                                      key={`${label}-${citationIndex}`}
+                                      className="bubble-source-pill"
+                                      href={href}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {label}
+                                    </a>
+                                  ) : (
+                                    <span key={`${label}-${citationIndex}`} className="bubble-source-pill">
+                                      {label}
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                       </article>
                     ))
@@ -1315,6 +1684,24 @@ function App() {
                   </button>
                   {documentsOpen ? (
                     <div className="document-list">
+                      {documents.length === 0 && uploadProgress.phase === 'selected' ? (
+                        <article className="document-item pending">
+                          <header>
+                            <strong>{uploadProgress.filename}</strong>
+                            <span className="badge">pending</span>
+                          </header>
+                          <p>Selected only. Click Upload and confirm to index this document.</p>
+                        </article>
+                      ) : null}
+                      {documents.length === 0 && uploadProgress.phase === 'uploading' ? (
+                        <article className="document-item pending">
+                          <header>
+                            <strong>{uploadProgress.filename}</strong>
+                            <span className="badge">indexing</span>
+                          </header>
+                          <p>Upload accepted. Indexing is in progress.</p>
+                        </article>
+                      ) : null}
                       {documents.map((document) => (
                         <article key={document.filename} className="document-item">
                           <header>
@@ -1337,23 +1724,25 @@ function App() {
                     <span className={`accordion-chevron ${feedbackOpen ? 'open' : ''}`}>^</span>
                   </button>
                   {feedbackOpen ? (
-                    <form className="feedback-form" onSubmit={(event) => void handleFeedbackSubmit(event)}>
-                      <label className="field">
-                        <span>User ID</span>
-                        <input value={feedbackUserId} onChange={(event) => setFeedbackUserId(event.target.value)} placeholder="your.id@company.com" />
-                      </label>
-                      <label className="field">
-                        <span>Feedback</span>
-                        <textarea
-                          value={feedbackText}
-                          onChange={(event) => setFeedbackText(event.target.value)}
-                          placeholder="What worked well, what felt confusing, and what should improve?"
-                        />
-                      </label>
-                      <button type="submit" disabled={busy || !feedbackUserId.trim() || !feedbackText.trim()}>
-                        Submit feedback
-                      </button>
-                    </form>
+                    <div className="feedback-panel-body">
+                      <form className="feedback-form" onSubmit={(event) => void handleFeedbackSubmit(event)}>
+                        <label className="field">
+                          <span>User ID</span>
+                          <input value={feedbackUserId} onChange={(event) => setFeedbackUserId(event.target.value)} placeholder="your.id@company.com" />
+                        </label>
+                        <label className="field">
+                          <span>Feedback</span>
+                          <textarea
+                            value={feedbackText}
+                            onChange={(event) => setFeedbackText(event.target.value)}
+                            placeholder="What worked well, what felt confusing, and what should improve?"
+                          />
+                        </label>
+                        <button type="submit" disabled={busy || !feedbackUserId.trim() || !feedbackText.trim()}>
+                          Submit feedback
+                        </button>
+                      </form>
+                    </div>
                   ) : (
                     <p className="accordion-helper">Open to share quick feedback after your demo test.</p>
                   )}

@@ -363,6 +363,66 @@ class AgentRun:
     # Analytics snapshot (from existing Analytics tab data)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _format_analytics_value(value: Any) -> str:
+        if value in (None, ""):
+            return "No data"
+        if isinstance(value, (int, float)):
+            return f"{value:,}"
+        return str(value)
+
+    def _load_metric_preview(self, metric: dict[str, Any]) -> dict[str, Any] | None:
+        if not self._analytics or not self.dataset_id:
+            return None
+        metric_id = str(metric.get("metric_id", ""))
+        cached_result = self._analytics.load_metric_result(self.dataset_id, metric_id) if metric_id else None
+        if cached_result:
+            return cached_result
+
+        sql = metric.get("sql")
+        if not isinstance(sql, str) or not sql.strip():
+            return None
+
+        result = self._analytics.execute_query(dataset_id=self.dataset_id, sql=sql)
+        preview_payload = {
+            "dataset_id": self.dataset_id,
+            "metric_id": metric_id,
+            "sql": sql,
+            "result": result,
+            "chart_type": metric.get("chart_type", "table"),
+            "source": "athena",
+        }
+        if metric_id:
+            self._analytics.cache_metric_result(self.dataset_id, metric_id, preview_payload)
+        return preview_payload
+
+    def _metric_preview_lines(self, metric: dict[str, Any], preview: dict[str, Any]) -> list[str]:
+        result = preview.get("result", {}) if isinstance(preview, dict) else {}
+        rows = result.get("rows", []) if isinstance(result, dict) else []
+        columns = result.get("columns", []) if isinstance(result, dict) else []
+        if not rows or not columns:
+            return [f"- {metric.get('title', 'Metric')}: No rows returned."]
+
+        lines = [f"### {metric.get('title', 'Metric')}"]
+        description = str(metric.get("description", "")).strip()
+        if description:
+            lines.append(f"- Description: {description}")
+
+        first_row = rows[0]
+        if len(rows) == 1 and len(columns) == 1:
+            lines.append(
+                f"- KPI value: {self._format_analytics_value(first_row.get(columns[0]))}"
+            )
+            return lines
+
+        lines.append("| " + " | ".join(columns) + " |")
+        lines.append("| " + " | ".join("---" for _ in columns) + " |")
+        for row in rows[:5]:
+            lines.append("| " + " | ".join(self._format_analytics_value(row.get(column)) for column in columns) + " |")
+        if len(rows) > 5:
+            lines.append(f"- Additional rows available: {len(rows) - 5}")
+        return lines
+
     def _load_analytics_snapshot(self) -> str | None:
         """
         Pull the pre-computed analytics summary + top metrics for the dataset
@@ -386,7 +446,7 @@ class AgentRun:
 
             lines = ["## Analytics KPIs"]
             lines.append(f"- Dataset: `{self.dataset_id}`")
-            lines.append(f"- Total rows: {summary.get('total_rows', 'unknown')}")
+            lines.append(f"- Total rows: {self._format_analytics_value(summary.get('total_rows', 'unknown'))}")
 
             for key, val in summary.items():
                 if key == "total_rows" or not isinstance(val, dict):
@@ -394,15 +454,38 @@ class AgentRun:
                 col = key.replace("top_", "").replace("_", " ")
                 label = val.get("label", "-")
                 count = val.get("count", "-")
-                lines.append(f"- Top {col}: {label} ({count})")
+                lines.append(
+                    f"- Top {col}: {self._format_analytics_value(label)} ({self._format_analytics_value(count)})"
+                )
 
             if metrics:
                 lines.append("")
                 lines.append("## Supporting Metrics")
-                lines.append("| Metric | Description |")
-                lines.append("| --- | --- |")
+                previewable_metrics = [metric for metric in metrics if metric.get("type") != "summary"][:3]
+                if previewable_metrics:
+                    for metric in previewable_metrics:
+                        try:
+                            preview = self._load_metric_preview(metric)
+                            if preview:
+                                lines.extend(self._metric_preview_lines(metric, preview))
+                                lines.append("")
+                        except Exception as metric_exc:
+                            LOGGER.warning(
+                                "Failed to load analytics metric preview for dataset=%s metric=%s: %s",
+                                self.dataset_id,
+                                metric.get("metric_id"),
+                                metric_exc,
+                            )
+                else:
+                    lines.append("- No supporting metrics were generated for this dataset.")
+
+                lines.append("### Available Metrics")
+                lines.append("| Metric | Type | Description |")
+                lines.append("| --- | --- | --- |")
                 for metric in metrics[:6]:
-                    lines.append(f"| {metric.get('title', '')} | {metric.get('description', '')} |")
+                    lines.append(
+                        f"| {metric.get('title', '')} | {metric.get('type', '')} | {metric.get('description', '')} |"
+                    )
 
             return "\n".join(lines)
         except Exception as exc:
@@ -444,9 +527,7 @@ class AgentRun:
             max_tokens=1500,
             temperature=0.1,
         )
-        if self._analytics_snapshot and (
-            "## Analytics KPIs" not in final or "## Supporting Metrics" not in final
-        ):
+        if self._analytics_snapshot and "## Analytics KPIs" not in final:
             final = f"{final.rstrip()}\n\n{self._analytics_snapshot}"
         message = {
             "type": "synthesis",

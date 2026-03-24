@@ -7,6 +7,8 @@ import {
   CartesianGrid,
   Cell,
   Legend,
+  Line,
+  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -97,7 +99,19 @@ type AnalyticsQueryResponse = {
   source: string
 }
 
-type ChartOption = 'number' | 'bar' | 'pie' | 'table'
+type ArchivedReport = {
+  id: string
+  runId: string | null
+  goal: string
+  datasetId: string
+  synthesis: string
+  createdAt: number
+  summary: Record<string, unknown>
+  metrics: AnalyticsMetric[]
+  metricResults: Record<string, AnalyticsQueryResponse>
+}
+
+type ChartOption = 'number' | 'bar' | 'pie' | 'line' | 'table'
 
 const CHART_COLORS = ['#0f766e', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6']
 
@@ -125,6 +139,8 @@ const TOOL_LABELS: Record<string, string> = {
   athena_sql: 'SQL Query',
   rag_retrieval: 'Knowledge Search',
 }
+
+const AGENT_REPORT_HISTORY_KEY = 'rag-agent-report-history'
 
 // ---------------------------------------------------------------------------
 // Helper: format epoch seconds
@@ -171,6 +187,7 @@ function formatSummaryCardValue(value: unknown): { primary: string; secondary?: 
 function inferChartType(chartType: string, rows: Array<Record<string, string | number | null>>): ChartOption {
   if (!rows.length) return 'table'
   if (chartType === 'number' || (rows.length === 1 && Object.keys(rows[0] ?? {}).length === 1)) return 'number'
+  if (chartType === 'line') return 'line'
   if (chartType === 'pie') return 'pie'
   if (chartType === 'table') return 'table'
   return rows.length <= 6 ? 'pie' : 'bar'
@@ -238,6 +255,20 @@ function AnalyticsChart({
     )
   }
 
+  if (chartType === 'line') {
+    return (
+      <ResponsiveContainer width="100%" height={220}>
+        <LineChart data={normalizedRows}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="label" />
+          <YAxis />
+          <Tooltip />
+          <Line type="monotone" dataKey="value" stroke="#0f766e" strokeWidth={3} />
+        </LineChart>
+      </ResponsiveContainer>
+    )
+  }
+
   if (chartType === 'pie') {
     return (
       <ResponsiveContainer width="100%" height={220}>
@@ -284,36 +315,17 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
   const [pastRuns, setPastRuns] = useState<PastRun[]>([])
   const [expandedThoughts, setExpandedThoughts] = useState<Set<number>>(new Set())
   const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set())
+  const [collapsedCards, setCollapsedCards] = useState<Set<string>>(new Set())
   const [workflowOpen, setWorkflowOpen] = useState(true)
+  const [archivedReports, setArchivedReports] = useState<ArchivedReport[]>([])
+  const [expandedArchivedReports, setExpandedArchivedReports] = useState<Set<string>>(new Set())
   const [reportSummary, setReportSummary] = useState<Record<string, unknown>>({})
   const [reportMetrics, setReportMetrics] = useState<AnalyticsMetric[]>([])
   const [reportMetricResults, setReportMetricResults] = useState<Record<string, AnalyticsQueryResponse>>({})
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  // Load presets on mount
-  useEffect(() => {
-    fetch(`${apiBaseUrl}/SFRAG/agents/presets`, {
-      headers: _authHeaders(),
-    })
-      .then((r) => r.json())
-      .then((data: { presets: GoalPreset[] }) => setPresets(data.presets ?? []))
-      .catch(() => {})
-  }, [apiBaseUrl])
-
-  // Load past runs when workspaceId changes
-  useEffect(() => {
-    _loadPastRuns()
-  }, [workspaceId])
-
-  // Scroll to bottom of timeline as new messages arrive
-  useEffect(() => {
-    if (timelineRef.current) {
-      timelineRef.current.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' })
-    }
-  }, [messages, synthesis])
-
-  function _authHeaders(): Record<string, string> {
+  const _authHeaders = useCallback((): Record<string, string> => {
     const raw = localStorage.getItem('rag-demo-auth-session')
     if (!raw) return {}
     try {
@@ -322,9 +334,9 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
     } catch {
       return {}
     }
-  }
+  }, [])
 
-  async function _apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const _apiFetch = useCallback(async <T,>(path: string, init?: RequestInit): Promise<T> => {
     const headers = new Headers(init?.headers)
     if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json')
@@ -335,13 +347,9 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
       throw new Error((await response.text()) || `Request failed: ${response.status}`)
     }
     return response.json() as Promise<T>
-  }
+  }, [apiBaseUrl, _authHeaders])
 
-  const reportDatasetId = useMemo(() => {
-    return datasetId.trim() || messages.find((message) => message.type === 'analytics_snapshot')?.dataset_id || ''
-  }, [datasetId, messages])
-
-  async function _loadPastRuns() {
+  const _loadPastRuns = useCallback(async () => {
     try {
       const response = await fetch(`${apiBaseUrl}/SFRAG/agents/runs?workspace_id=${encodeURIComponent(workspaceId)}`, {
         headers: _authHeaders(),
@@ -353,11 +361,79 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
     } catch {
       // silent
     }
-  }
+  }, [apiBaseUrl, workspaceId, _authHeaders])
+
+  // Load presets on mount
+  useEffect(() => {
+    fetch(`${apiBaseUrl}/SFRAG/agents/presets`, {
+      headers: _authHeaders(),
+    })
+      .then((r) => r.json())
+      .then((data: { presets: GoalPreset[] }) => setPresets(data.presets ?? []))
+      .catch(() => {})
+  }, [apiBaseUrl, _authHeaders])
+
+  // Load past runs when workspaceId changes
+  useEffect(() => {
+    void _loadPastRuns()
+  }, [_loadPastRuns])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`${AGENT_REPORT_HISTORY_KEY}:${workspaceId}`)
+      if (!raw) {
+        setArchivedReports([])
+        return
+      }
+      const parsed = JSON.parse(raw) as ArchivedReport[]
+      setArchivedReports(Array.isArray(parsed) ? parsed : [])
+    } catch {
+      setArchivedReports([])
+    }
+  }, [workspaceId])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`${AGENT_REPORT_HISTORY_KEY}:${workspaceId}`, JSON.stringify(archivedReports))
+    } catch {
+      // ignore storage errors
+    }
+  }, [archivedReports, workspaceId])
+
+  // Scroll to bottom of timeline as new messages arrive
+  useEffect(() => {
+    if (timelineRef.current) {
+      timelineRef.current.scrollTo({ top: timelineRef.current.scrollHeight, behavior: 'smooth' })
+    }
+  }, [messages, synthesis])
+
+  const reportDatasetId = useMemo(() => {
+    return datasetId.trim() || messages.find((message) => message.type === 'analytics_snapshot')?.dataset_id || ''
+  }, [datasetId, messages])
+
+  const archiveCurrentReport = useCallback(() => {
+    if (!synthesis) return
+    setArchivedReports((prev) => [
+      {
+        id: `${runId ?? 'draft'}-${Date.now()}`,
+        runId,
+        goal: goal.trim() || 'Untitled report',
+        datasetId: reportDatasetId,
+        synthesis,
+        createdAt: Math.floor(Date.now() / 1000),
+        summary: reportSummary,
+        metrics: reportMetrics,
+        metricResults: reportMetricResults,
+      },
+      ...prev,
+    ])
+  }, [goal, reportDatasetId, reportMetricResults, reportMetrics, reportSummary, runId, synthesis])
 
   const handleRun = useCallback(async () => {
     const trimmedGoal = goal.trim()
     if (!trimmedGoal || running) return
+
+    archiveCurrentReport()
 
     // Reset state
     setMessages([])
@@ -366,6 +442,7 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
     setRunId(null)
     setExpandedThoughts(new Set())
     setExpandedTools(new Set())
+    setCollapsedCards(new Set())
     setReportSummary({})
     setReportMetrics([])
     setReportMetricResults({})
@@ -435,7 +512,7 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
     } finally {
       setRunning(false)
     }
-  }, [goal, datasetId, ragIndex, workspaceId, running, apiBaseUrl, pushToast])
+  }, [goal, datasetId, ragIndex, workspaceId, running, apiBaseUrl, pushToast, archiveCurrentReport, _authHeaders, _loadPastRuns])
 
   function _handleEvent(payload: AgentMessage) {
     switch (payload.type) {
@@ -469,6 +546,7 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
 
   async function handleLoadPastRun(run: PastRun) {
     try {
+      archiveCurrentReport()
       const response = await fetch(
         `${apiBaseUrl}/SFRAG/agents/runs/${run.run_id}?workspace_id=${encodeURIComponent(run.workspace_id)}`,
         { headers: _authHeaders() },
@@ -482,6 +560,7 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
       setRunId(run.run_id)
       setExpandedThoughts(new Set())
       setExpandedTools(new Set())
+      setCollapsedCards(new Set())
       setReportSummary({})
       setReportMetrics([])
       setReportMetricResults({})
@@ -499,10 +578,26 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
     }
   }
 
+  function toggleArchivedReport(id: string) {
+    setExpandedArchivedReports((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
   function toggleThought(index: number) {
     setExpandedThoughts((prev) => {
       const next = new Set(prev)
-      next.has(index) ? next.delete(index) : next.add(index)
+      if (next.has(index)) {
+        next.delete(index)
+      } else {
+        next.add(index)
+      }
       return next
     })
   }
@@ -510,9 +605,29 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
   function toggleTool(index: number) {
     setExpandedTools((prev) => {
       const next = new Set(prev)
-      next.has(index) ? next.delete(index) : next.add(index)
+      if (next.has(index)) {
+        next.delete(index)
+      } else {
+        next.add(index)
+      }
       return next
     })
+  }
+
+  function toggleCard(cardId: string) {
+    setCollapsedCards((prev) => {
+      const next = new Set(prev)
+      if (next.has(cardId)) {
+        next.delete(cardId)
+      } else {
+        next.add(cardId)
+      }
+      return next
+    })
+  }
+
+  function isCardCollapsed(cardId: string) {
+    return collapsedCards.has(cardId)
   }
 
   const workflowSteps = (() => {
@@ -562,7 +677,68 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
     })
   })()
 
-  const reportSummaryCards = useMemo(() => Object.entries(reportSummary), [reportSummary])
+  function renderReportVisuals(
+    summary: Record<string, unknown>,
+    metrics: AnalyticsMetric[],
+    metricResults: Record<string, AnalyticsQueryResponse>,
+  ) {
+    const summaryCards = Object.entries(summary)
+    if (!summaryCards.length) return null
+
+    return (
+      <div className="agents-report-visuals">
+        <div className="panel-head tight">
+          <div>
+            <h3>Analytics visuals</h3>
+            <p className="helper-text">KPI cards and chart snapshots pulled from the selected analytics dataset.</p>
+          </div>
+        </div>
+        <div className="analytics-card-grid agents-report-kpis">
+          {summaryCards.map(([key, value]) => {
+            const display = formatSummaryCardValue(value)
+            return (
+              <article key={key} className="analytics-kpi-card compact">
+                <span>{formatMetricLabel(key)}</span>
+                <strong>{display.primary}</strong>
+                {display.secondary ? <small>{display.secondary}</small> : null}
+              </article>
+            )
+          })}
+        </div>
+        {metrics.length > 0 ? (
+          <div className="analytics-visual-grid agents-report-charts">
+            {metrics.map((metric) => {
+              const result = metricResults[metric.metric_id]
+              return (
+                <section key={metric.metric_id} className="analytics-visual-card compact">
+                  <div className="panel-head tight">
+                    <div>
+                      <h3>{metric.title}</h3>
+                      <p className="helper-text">{metric.description}</p>
+                    </div>
+                  </div>
+                  {result ? (
+                    <AnalyticsChart chartType={inferChartType(result.chart_type, result.result.rows)} rows={result.result.rows} />
+                  ) : (
+                    <p className="analytics-empty">Loading chart...</p>
+                  )}
+                </section>
+              )
+            })}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  function renderCardToggle(cardId: string) {
+    const collapsed = isCardCollapsed(cardId)
+    return (
+      <button type="button" className="ghost-button agent-section-toggle" onClick={() => toggleCard(cardId)}>
+        {collapsed ? 'Expand section' : 'Collapse section'}
+      </button>
+    )
+  }
 
   useEffect(() => {
     if (!synthesis || !reportDatasetId) return
@@ -598,7 +774,7 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
     return () => {
       cancelled = true
     }
-  }, [synthesis, reportDatasetId])
+  }, [synthesis, reportDatasetId, _apiFetch])
 
   // ---------------------------------------------------------------------------
   // Render
@@ -720,6 +896,40 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
 
         {/* Agent timeline */}
         <div className="agents-timeline-container" ref={timelineRef}>
+          {archivedReports.map((report) => {
+            const expanded = expandedArchivedReports.has(report.id)
+            return (
+              <div key={report.id} className="agent-card agent-purple agent-synthesis agent-synthesis-archived">
+                <div className="agent-card-header">
+                  <span className="agent-avatar agent-purple">H</span>
+                  <div className="agent-card-meta">
+                    <span className="agent-name">Historical Report</span>
+                    <span className="agent-time">{fmtTime(report.createdAt)}</span>
+                  </div>
+                </div>
+                <div className="agent-card-body">
+                  <div className="agents-archived-report-head">
+                    <div>
+                      <p className="agent-task-label">{report.goal}</p>
+                      {report.datasetId ? <p className="helper-text">Dataset: {report.datasetId}</p> : null}
+                    </div>
+                    <button className="ghost-button" onClick={() => toggleArchivedReport(report.id)}>
+                      {expanded ? 'Collapse report' : 'Expand report'}
+                    </button>
+                  </div>
+                  {expanded ? (
+                    <>
+                      <div className="agent-output agent-synthesis-output">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.synthesis}</ReactMarkdown>
+                      </div>
+                      {renderReportVisuals(report.summary, report.metrics, report.metricResults)}
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            )
+          })}
+
           {messages.length === 0 && !running && (
             <div className="agents-empty-state">
               <p>Enter a goal above and click <strong>Run</strong> to watch the agents collaborate.</p>
@@ -736,6 +946,7 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
 
           {messages.map((msg, index) => {
             if (msg.type === 'plan') {
+              const cardId = `plan-${index}`
               return (
                 <div key={index} className={`agent-card agent-card-plan ${AGENT_COLORS['planner']}`}>
                   <div className="agent-card-header">
@@ -744,8 +955,9 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
                       <span className="agent-name">Planner</span>
                       <span className="agent-time">{fmtTime(msg.timestamp)}</span>
                     </div>
+                    {renderCardToggle(cardId)}
                   </div>
-                  <div className="agent-card-body">
+                  {!isCardCollapsed(cardId) ? <div className="agent-card-body">
                     <p className="agent-task-label">Created {(msg.steps ?? []).length}-step plan:</p>
                     <ol className="agent-plan-list">
                       {(msg.steps ?? []).map((step, i) => (
@@ -757,12 +969,13 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
                         </li>
                       ))}
                     </ol>
-                  </div>
+                  </div> : null}
                 </div>
               )
             }
 
             if (msg.type === 'analytics_snapshot') {
+              const cardId = `analytics-${index}`
               return (
                 <div key={index} className="agent-card agent-teal agent-analytics-snapshot">
                   <div className="agent-card-header">
@@ -772,18 +985,20 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
                       <span className="agent-tool-badge">⚡ {msg.dataset_id}</span>
                       <span className="agent-time">{fmtTime(msg.timestamp)}</span>
                     </div>
+                    {renderCardToggle(cardId)}
                   </div>
-                  <div className="agent-card-body">
+                  {!isCardCollapsed(cardId) ? <div className="agent-card-body">
                     <p className="agent-task-label">Structured metrics from the Analytics tab</p>
                     <div className="agent-output">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.snapshot ?? ''}</ReactMarkdown>
                     </div>
-                  </div>
+                  </div> : null}
                 </div>
               )
             }
 
             if (msg.type === 'agent_message') {
+              const cardId = `agent-${index}`
               const colorClass = AGENT_COLORS[msg.agent ?? ''] ?? 'agent-gray'
               const initial = (msg.agent_name ?? 'A')[0].toUpperCase()
               return (
@@ -800,8 +1015,9 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
                       )}
                       <span className="agent-time">{fmtTime(msg.timestamp)}</span>
                     </div>
+                    {renderCardToggle(cardId)}
                   </div>
-                  <div className="agent-card-body">
+                  {!isCardCollapsed(cardId) ? <div className="agent-card-body">
                     <p className="agent-task-label">{msg.task}</p>
 
                     {/* Output */}
@@ -840,12 +1056,17 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
                         )}
                       </div>
                     )}
-                  </div>
+                  </div> : (
+                    <div className="agent-card-body agent-card-collapsed-summary">
+                      <p className="agent-task-label">{msg.task}</p>
+                    </div>
+                  )}
                 </div>
               )
             }
 
             if (msg.type === 'synthesis') {
+              const cardId = `synthesis-${index}`
               return (
                 <div key={index} className="agent-card agent-purple agent-synthesis">
                   <div className="agent-card-header">
@@ -854,61 +1075,33 @@ export function AgentsTab({ apiBaseUrl, workspaceId, pushToast }: AgentsTabProps
                       <span className="agent-name">Synthesizer — Final Report</span>
                       <span className="agent-time">{fmtTime(msg.timestamp)}</span>
                     </div>
+                    {renderCardToggle(cardId)}
                   </div>
-                  <div className="agent-card-body">
-                    <div className="agent-output agent-synthesis-output">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.output ?? ''}</ReactMarkdown>
-                    </div>
-                    {reportSummaryCards.length > 0 ? (
-                      <div className="agents-report-visuals">
-                        <div className="panel-head tight">
-                          <div>
-                            <h3>Analytics visuals</h3>
-                            <p className="helper-text">KPI cards and chart snapshots pulled from the selected analytics dataset.</p>
-                          </div>
+                  {!isCardCollapsed(cardId) ? <div className="agent-card-body agent-synthesis-body">
+                    <div className="agent-report-shell">
+                      <div className="agent-report-intro">
+                        <div>
+                          <span className="agent-report-eyebrow">Integrated Report</span>
+                          <h3>Final management-ready narrative</h3>
+                          <p className="helper-text">Combined agent findings with structured analytics KPI context.</p>
                         </div>
-                        <div className="analytics-card-grid agents-report-kpis">
-                          {reportSummaryCards.map(([key, value]) => {
-                            const display = formatSummaryCardValue(value)
-                            return (
-                              <article key={key} className="analytics-kpi-card compact">
-                                <span>{formatMetricLabel(key)}</span>
-                                <strong>{display.primary}</strong>
-                                {display.secondary ? <small>{display.secondary}</small> : null}
-                              </article>
-                            )
-                          })}
-                        </div>
-                        {reportMetrics.length > 0 ? (
-                          <div className="analytics-visual-grid agents-report-charts">
-                            {reportMetrics.map((metric) => {
-                              const result = reportMetricResults[metric.metric_id]
-                              return (
-                                <section key={metric.metric_id} className="analytics-visual-card compact">
-                                  <div className="panel-head tight">
-                                    <div>
-                                      <h3>{metric.title}</h3>
-                                      <p className="helper-text">{metric.description}</p>
-                                    </div>
-                                  </div>
-                                  {result ? (
-                                    <AnalyticsChart chartType={inferChartType(result.chart_type, result.result.rows)} rows={result.result.rows} />
-                                  ) : (
-                                    <p className="analytics-empty">Loading chart...</p>
-                                  )}
-                                </section>
-                              )
-                            })}
-                          </div>
-                        ) : null}
+                        {reportDatasetId ? <span className="agent-tool-badge">Dataset {reportDatasetId}</span> : null}
                       </div>
-                    ) : null}
+                      {renderReportVisuals(reportSummary, reportMetrics, reportMetricResults)}
+                      <div className="agent-output agent-synthesis-output agent-report-narrative">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.output ?? ''}</ReactMarkdown>
+                      </div>
+                    </div>
                     <div className="agent-actions">
                       <button className="primary-button" onClick={handleCopyReport}>
                         Copy Report
                       </button>
                     </div>
-                  </div>
+                  </div> : (
+                    <div className="agent-card-body agent-card-collapsed-summary">
+                      <p className="agent-task-label">Final report ready. Expand to view the integrated narrative and KPI visuals.</p>
+                    </div>
+                  )}
                 </div>
               )
             }

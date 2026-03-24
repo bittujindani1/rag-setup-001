@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Bar,
   BarChart,
@@ -76,8 +76,7 @@ type AnalyticsHistoryEntry = {
 }
 
 const CHART_COLORS = ['#0f766e', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6']
-const CHART_OPTIONS = ['number', 'bar', 'pie', 'line', 'table'] as const
-type ChartOption = (typeof CHART_OPTIONS)[number]
+type ChartOption = 'number' | 'bar' | 'pie' | 'line' | 'table'
 const ANALYTICS_HISTORY_KEY = 'rag-analytics-history'
 const AUTH_SESSION_KEY = 'rag-demo-auth-session'
 
@@ -312,12 +311,12 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     [datasets, selectedDataset],
   )
 
-  function persistRecentQueries(entries: AnalyticsHistoryEntry[]) {
+  const persistRecentQueries = useCallback((entries: AnalyticsHistoryEntry[]) => {
     localStorage.setItem(ANALYTICS_HISTORY_KEY, JSON.stringify(entries))
     setRecentQueries(entries)
-  }
+  }, [])
 
-  async function loadDatasets(selectDataset?: string) {
+  const loadDatasets = useCallback(async (selectDataset?: string) => {
     const response = await apiFetch<{ datasets: AnalyticsDataset[] }>(apiBaseUrl, '/SFRAG/analytics/datasets')
     setDatasets(response.datasets)
     const next = selectDataset ?? selectedDataset ?? response.datasets[0]?.dataset_id ?? ''
@@ -325,16 +324,16 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       setSelectedDataset(next)
     }
     return response.datasets
-  }
+  }, [apiBaseUrl, selectedDataset])
 
-  async function loadDatasetSummary(datasetId: string) {
+  const loadDatasetSummary = useCallback(async (datasetId: string) => {
     const response = await apiFetch<AnalyticsSummaryResponse>(apiBaseUrl, `/SFRAG/analytics/summary/${datasetId}`)
     setSummary(response.summary ?? {})
     setMetrics(response.metrics ?? [])
     return response
-  }
+  }, [apiBaseUrl])
 
-  async function runMetric(datasetId: string, metric: AnalyticsMetric) {
+  const runMetric = useCallback(async (datasetId: string, metric: AnalyticsMetric) => {
     const response = await apiFetch<AnalyticsQueryResponse>(apiBaseUrl, '/SFRAG/analytics/query', {
       method: 'POST',
       body: JSON.stringify({
@@ -344,15 +343,15 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     })
     setMetricResults((current) => ({ ...current, [metric.metric_id]: response }))
     return response
-  }
+  }, [apiBaseUrl])
 
-  async function hydrateDashboard(datasetId: string) {
+  const hydrateDashboard = useCallback(async (datasetId: string) => {
     const response = await loadDatasetSummary(datasetId)
     const defaultMetrics = response.metrics.filter((metric) => metric.type !== 'summary').slice(0, 3)
     for (const metric of defaultMetrics) {
       await runMetric(datasetId, metric)
     }
-  }
+  }, [loadDatasetSummary, runMetric])
 
   useEffect(() => {
     void loadDatasets()
@@ -375,13 +374,13 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     } catch {
       setRecentQueries([])
     }
-  }, [])
+  }, [loadDatasets])
 
   useEffect(() => {
     if (selectedDataset) {
       void hydrateDashboard(selectedDataset)
     }
-  }, [selectedDataset])
+  }, [selectedDataset, hydrateDashboard])
 
   useEffect(() => {
     const payload: AnalyticsSidebarState = {
@@ -391,6 +390,36 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
     }
     window.dispatchEvent(new CustomEvent<AnalyticsSidebarState>('analytics-sidebar-state', { detail: payload }))
   }, [datasets, selectedDataset, selectedDatasetMeta])
+
+  const handleDeleteDataset = useCallback(async (datasetId: string) => {
+    try {
+      setBusy(true)
+      const response = await apiFetch<{
+        status: string
+        dataset_id: string
+        deleted_objects: number
+      }>(apiBaseUrl, `/SFRAG/analytics/datasets/${datasetId}`, {
+        method: 'DELETE',
+      })
+      const remaining = await loadDatasets()
+      const nextDataset = remaining.find((dataset) => dataset.dataset_id !== datasetId)?.dataset_id ?? ''
+      if (selectedDataset === datasetId) {
+        setSelectedDataset(nextDataset)
+        if (!nextDataset) {
+          setSummary({})
+          setMetrics([])
+          setMetricResults({})
+          setAnalyticsAnswer(null)
+          setShowSql(false)
+        }
+      }
+      pushToast(`Deleted ${response.dataset_id} and removed ${response.deleted_objects} analytics objects.`, 'success')
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Dataset deletion failed.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }, [apiBaseUrl, loadDatasets, pushToast, selectedDataset])
 
   useEffect(() => {
     const handleSelect = (event: Event) => {
@@ -413,7 +442,7 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       window.removeEventListener('analytics-sidebar-select', handleSelect as EventListener)
       window.removeEventListener('analytics-sidebar-delete', handleDelete as EventListener)
     }
-  }, [])
+  }, [handleDeleteDataset])
 
   async function performUpload() {
     if (!uploadFile || !datasetDraft.trim()) return
@@ -446,36 +475,6 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       setUploadStage('idle')
       setUploadStatusMessage('')
       pushToast(error instanceof Error ? error.message : 'Analytics upload failed.', 'error')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function handleDeleteDataset(datasetId: string) {
-    try {
-      setBusy(true)
-      const response = await apiFetch<{
-        status: string
-        dataset_id: string
-        deleted_objects: number
-      }>(apiBaseUrl, `/SFRAG/analytics/datasets/${datasetId}`, {
-        method: 'DELETE',
-      })
-      const remaining = await loadDatasets()
-      const nextDataset = remaining.find((dataset) => dataset.dataset_id !== datasetId)?.dataset_id ?? ''
-      if (selectedDataset === datasetId) {
-        setSelectedDataset(nextDataset)
-        if (!nextDataset) {
-          setSummary({})
-          setMetrics([])
-          setMetricResults({})
-          setAnalyticsAnswer(null)
-          setShowSql(false)
-        }
-      }
-      pushToast(`Deleted ${response.dataset_id} and removed ${response.deleted_objects} analytics objects.`, 'success')
-    } catch (error) {
-      pushToast(error instanceof Error ? error.message : 'Dataset deletion failed.', 'error')
     } finally {
       setBusy(false)
     }
