@@ -38,6 +38,21 @@ def _retrieve_documents(retriever, query: str):
     return retriever.get_relevant_documents(query)
 
 
+def _wants_table_response(question: str) -> bool:
+    lowered = (question or "").lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "table format",
+            "tabular format",
+            "in a table",
+            "show a table",
+            "markdown table",
+            "table with",
+        )
+    )
+
+
 class MultiModalRAGChainWithHistory:
     def __init__(self, retriever) -> None:
         self.retriever = retriever
@@ -71,9 +86,16 @@ class MultiModalRAGChainWithHistory:
         docs = self._limit_docs_to_budget(docs)
         context = split_image_text_types(docs)
         formatted_texts = "\n".join(context["texts"])
+        output_instruction = (
+            "Format the answer as a markdown table. Keep the table complete, concise, and directly grounded in the context. "
+            "If helpful, add one short sentence after the table, but do not replace the table with bullets or prose."
+            if _wants_table_response(question)
+            else "Use concise prose or bullets unless the user explicitly requested a table."
+        )
         prompt = (
             f"Conversation history:\n{self._history_to_text(history_messages)}\n\n"
             f"User-provided question: {question}\n\n"
+            f"Output formatting instruction: {output_instruction}\n\n"
             "Text and/or tables retrieved are as follows from which to only answer:\n"
             f"{formatted_texts}"
         )

@@ -82,6 +82,30 @@ type DirectIngestResponse = {
   detail?: string
 }
 
+type PresignedUploadResponse = {
+  url: string
+  fields: Record<string, string>
+  bucket: string
+  object_key: string
+}
+
+type AsyncIngestResponse = {
+  job_id: string
+  status: string
+}
+
+type IngestJobStatusResponse = {
+  job_id: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  index_name?: string
+  filename?: string
+  source_type?: string
+  created_at?: number
+  updated_at?: number
+  error?: string
+  result?: DirectIngestResponse
+}
+
 type FeedbackResponse = {
   status: string
 }
@@ -164,6 +188,13 @@ function nowIso(): string {
   return new Date().toISOString()
 }
 
+function createClientId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 async function readErrorMessage(response: Response): Promise<string> {
   const text = await response.text()
   if (!text) return `Request failed: ${response.status}`
@@ -200,6 +231,36 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(await readErrorMessage(response))
   }
   return response.json() as Promise<T>
+}
+
+async function uploadFileToPresignedTarget(target: PresignedUploadResponse, file: File): Promise<void> {
+  const formData = new FormData()
+  Object.entries(target.fields).forEach(([key, value]) => {
+    formData.append(key, value)
+  })
+  formData.append('file', file)
+
+  const response = await fetch(target.url, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(text || `S3 upload failed with status ${response.status}`)
+  }
+}
+
+async function waitForIngestJob(jobId: string): Promise<IngestJobStatusResponse> {
+  const maxAttempts = 90
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const job = await apiFetch<IngestJobStatusResponse>(`/SFRAG/ingest-status/${jobId}`)
+    if (job.status === 'completed' || job.status === 'failed') {
+      return job
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, attempt < 10 ? 1000 : 2000))
+  }
+  throw new Error('Indexing timed out before the upload service reported completion.')
 }
 
 function mapStepsToMessages(thread?: Thread): Message[] {
@@ -523,7 +584,7 @@ function App() {
   const isAdmin = authSession?.role === 'admin'
 
   function pushToast(message: string, tone: Toast['tone']) {
-    const id = crypto.randomUUID()
+    const id = createClientId()
     setToasts((current) => [...current, { id, tone, message }])
     window.setTimeout(() => {
       setToasts((current) => current.filter((toast) => toast.id !== id))
@@ -863,15 +924,41 @@ function App() {
         message: 'Uploading and indexing document...',
       })
       setLoadingMessage(`Uploading ${pendingFile.name}...`)
-      const ingestForm = new FormData()
-      ingestForm.append('index_name', indexName)
-      ingestForm.append('file', pendingFile)
-      const ingestResponse = await apiFetch<DirectIngestResponse>('/SFRAG/ingest', {
+      const presignedUpload = await apiFetch<PresignedUploadResponse>('/SFRAG/uploads/presign', {
         method: 'POST',
-        body: ingestForm,
+        body: JSON.stringify({
+          index_name: indexName,
+          filename: pendingFile.name,
+          content_type: pendingFile.type || 'application/octet-stream',
+        }),
       })
-      if (ingestResponse.status === 'Error') {
-        throw new Error(ingestResponse.detail || ingestResponse.message || 'Upload failed.')
+      setUploadProgress({
+        phase: 'uploading',
+        filename: pendingFile.name,
+        message: 'Uploading file to the document store...',
+      })
+      await uploadFileToPresignedTarget(presignedUpload, pendingFile)
+      setUploadProgress({
+        phase: 'uploading',
+        filename: pendingFile.name,
+        message: 'File uploaded. Indexing document for RAG...',
+      })
+      setLoadingMessage(`Indexing ${pendingFile.name}...`)
+      const queuedJob = await apiFetch<AsyncIngestResponse>('/SFRAG/ingest-async', {
+        method: 'POST',
+        body: JSON.stringify({
+          index_name: indexName,
+          s3_key: presignedUpload.object_key,
+          content_type: pendingFile.type || 'application/octet-stream',
+        }),
+      })
+      const completedJob = await waitForIngestJob(queuedJob.job_id)
+      if (completedJob.status === 'failed') {
+        throw new Error(completedJob.error || 'Upload failed during indexing.')
+      }
+      const ingestResponse = completedJob.result
+      if (!ingestResponse || ingestResponse.status === 'Error') {
+        throw new Error(ingestResponse?.detail || ingestResponse?.message || 'Upload failed.')
       }
       setUploadFile(null)
       const refreshedDocuments = await refreshDocuments(indexName)

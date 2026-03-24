@@ -78,6 +78,13 @@ type AnalyticsHistoryEntry = {
 const CHART_COLORS = ['#0f766e', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444', '#14b8a6']
 type ChartOption = 'number' | 'bar' | 'pie' | 'line' | 'table'
 const ANALYTICS_HISTORY_KEY = 'rag-analytics-history'
+
+function createClientId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
 const AUTH_SESSION_KEY = 'rag-demo-auth-session'
 
 async function apiFetch<T>(apiBaseUrl: string, path: string, init?: RequestInit): Promise<T> {
@@ -527,7 +534,7 @@ export function AnalyticsTab({ apiBaseUrl, pushToast }: AnalyticsTabProps) {
       setAnswerChartOverride(null)
       setShowSql(false)
       const entry: AnalyticsHistoryEntry = {
-        id: crypto.randomUUID(),
+        id: createClientId(),
         datasetId: selectedDataset,
         question: analyticsQuestion.trim(),
         timestamp: Date.now(),
