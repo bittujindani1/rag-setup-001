@@ -282,6 +282,10 @@ def _normalize_filename_hint(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (value or "").lower())
 
 
+def _normalize_search_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
 def _filename_hint_tokens(value: str) -> set[str]:
     stop_words = {
         "pdf",
@@ -300,6 +304,185 @@ def _filename_hint_tokens(value: str) -> set[str]:
         if len(token) >= 4 and token not in stop_words
     }
     return tokens
+
+
+def _extract_policy_metadata(file_name: str, text_samples: list[str]) -> dict[str, Any]:
+    joined_text = "\n".join(sample or "" for sample in text_samples[:6])
+    normalized_name = _normalize_search_text(file_name)
+    normalized_text = _normalize_search_text(joined_text)
+
+    def _capture(patterns: list[str]) -> str | None:
+        for pattern in patterns:
+            match = re.search(pattern, joined_text, re.IGNORECASE)
+            if match:
+                return re.sub(r"\s+", " ", match.group(1)).strip(" :\n\t")
+        return None
+
+    policy_name = _capture([
+        r"Policy Name\s*[:\-]?\s*(.+)",
+    ])
+    insurer = _capture([
+        r"Insurer\s*[:\-]?\s*(.+)",
+    ])
+    max_coverage_limit = _capture([
+        r"Maximum Coverage Limit\s*[:\-]?\s*([^\n]+)",
+        r"Base Sum Insured\s*[:\-]?\s*([^\n]+)",
+    ])
+    coverage_period = _capture([
+        r"Coverage Period\s*[:\-]?\s*([^\n]+)",
+        r"Policy Period\s*[:\-]?\s*([^\n]+)",
+    ])
+    eligible_group = _capture([
+        r"Eligible (?:Age|Ages|Travelers|Members|Persons)\s*[:\-]?\s*([^\n]+)",
+    ])
+
+    policy_type = "general"
+    if "travel" in normalized_name or "travel" in normalized_text:
+        policy_type = "travel"
+    elif "health" in normalized_name or "health" in normalized_text:
+        policy_type = "health"
+
+    tags = sorted(
+        {
+            token
+            for token in (
+                policy_type,
+                *list(_filename_hint_tokens(file_name)),
+                *list(_filename_hint_tokens(policy_name or "")),
+                *list(_filename_hint_tokens(insurer or "")),
+            )
+            if token
+        }
+    )
+    return {
+        "policy_type": policy_type,
+        "policy_name": policy_name,
+        "insurer_name": insurer,
+        "maximum_coverage_limit": max_coverage_limit,
+        "coverage_period": coverage_period,
+        "eligible_group": eligible_group,
+        "search_tags": tags,
+    }
+
+
+def _document_keyword_score(query: str, document: dict[str, Any]) -> float:
+    normalized_query = _normalize_search_text(query)
+    query_tokens = _filename_hint_tokens(query)
+    score = 0.0
+
+    filename = str(document.get("filename", ""))
+    policy_name = str(document.get("policy_name", "") or "")
+    insurer_name = str(document.get("insurer_name", "") or "")
+    policy_type = str(document.get("policy_type", "") or "")
+    category = str(document.get("category", "") or "")
+    search_tags = {str(tag).lower() for tag in (document.get("search_tags") or [])}
+
+    haystacks = [
+        _normalize_search_text(filename),
+        _normalize_search_text(policy_name),
+        _normalize_search_text(insurer_name),
+        _normalize_search_text(policy_type),
+        _normalize_search_text(category),
+    ]
+    for haystack in haystacks:
+        if haystack and haystack in normalized_query:
+            score += 6.0
+        if haystack and normalized_query and normalized_query in haystack:
+            score += 4.0
+
+    for token in query_tokens:
+        if token in search_tags:
+            score += 3.0
+        if token in _filename_hint_tokens(filename):
+            score += 2.0
+        if token in _filename_hint_tokens(policy_name):
+            score += 2.0
+
+    if "health" in normalized_query and policy_type == "health":
+        score += 8.0
+    if "travel" in normalized_query and policy_type == "travel":
+        score += 8.0
+    if "policy" in normalized_query and policy_name:
+        score += 1.5
+    return score
+
+
+def _rank_documents_for_query(query: str, documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranked = sorted(
+        documents,
+        key=lambda document: (
+            _document_keyword_score(query, document),
+            int(document.get("updated_at", 0) or 0),
+        ),
+        reverse=True,
+    )
+    return ranked
+
+
+def _build_metadata_citation(document: dict[str, Any], text: str) -> dict[str, Any]:
+    filename = str(document.get("filename", ""))
+    return {
+        "type": "TEXT",
+        "filename": filename,
+        "document_id": filename,
+        "section_id": f"{filename}:metadata",
+        "page_numbers": ["1"],
+        "url": [document.get("storage_url", filename) or filename],
+        "pdf_url": document.get("storage_url", filename) or filename,
+        "text": text,
+    }
+
+
+def _metadata_response_for_policy_question(query: str, documents: list[dict[str, Any]]) -> dict[str, Any] | None:
+    lowered = _normalize_search_text(query)
+    if not documents:
+        return None
+
+    def _non_empty(field: str) -> list[tuple[dict[str, Any], str]]:
+        values: list[tuple[dict[str, Any], str]] = []
+        for document in documents:
+            value = str(document.get(field, "") or "").strip()
+            if value:
+                values.append((document, value))
+        return values
+
+    if "maximum coverage" in lowered or "coverage limit" in lowered or "sum insured" in lowered:
+        matches = _non_empty("maximum_coverage_limit")
+        if not matches:
+            return None
+        if len(matches) == 1 or _document_keyword_score(query, matches[0][0]) > _document_keyword_score(query, matches[1][0]):
+            document, value = matches[0]
+            answer = f"The maximum coverage limit in {document.get('filename')} is {value}."
+            return {"content": answer, "citation": [_build_metadata_citation(document, answer)]}
+        lines = [
+            "Different uploaded policies show different maximum coverage limits:",
+            "",
+            "| Document | Maximum Coverage Limit |",
+            "| --- | --- |",
+        ]
+        citations: list[dict[str, Any]] = []
+        for document, value in matches[:5]:
+            lines.append(f"| {document.get('filename')} | {value} |")
+            citations.append(_build_metadata_citation(document, f"Maximum coverage limit: {value}"))
+        return {"content": "\n".join(lines), "citation": citations}
+
+    if "policy name" in lowered:
+        matches = _non_empty("policy_name")
+        if not matches:
+            return None
+        document, value = matches[0]
+        answer = f'The policy name in {document.get("filename")} is "{value}".'
+        return {"content": answer, "citation": [_build_metadata_citation(document, answer)]}
+
+    if "insurer" in lowered or "insurance company" in lowered:
+        matches = _non_empty("insurer_name")
+        if not matches:
+            return None
+        document, value = matches[0]
+        answer = f'The insurer in {document.get("filename")} is "{value}".'
+        return {"content": answer, "citation": [_build_metadata_citation(document, answer)]}
+
+    return None
 
 
 def _detect_requested_filenames(index_name: str, query: str, explicit_filter: str | None) -> list[str]:
@@ -730,6 +913,7 @@ def _index_text_document(
         index_name,
     )
     category = _smart_infer_category(file_name, texts_list[:3])
+    policy_metadata = _extract_policy_metadata(file_name, texts_list[:6])
     get_document_category_store().upsert_document(
         index_name=index_name,
         filename=file_name,
@@ -738,6 +922,7 @@ def _index_text_document(
         content_type=content_type,
         size_bytes=file_size,
         storage_url=input_file_url,
+        metadata=policy_metadata,
     )
     get_metrics_collector().increment_documents_indexed(indexed_chunks)
     return {
@@ -971,6 +1156,7 @@ def _ingest_local_file(
             )
             get_metrics_collector().increment_documents_indexed(indexed_chunks)
             category = _smart_infer_category(file_name, texts_list[:3])
+            policy_metadata = _extract_policy_metadata(file_name, texts_list[:6])
             get_document_category_store().upsert_document(
                 index_name=index_name,
                 filename=file_name,
@@ -979,6 +1165,7 @@ def _ingest_local_file(
                 content_type=content_type,
                 size_bytes=file_size,
                 storage_url=input_file_url,
+                metadata=policy_metadata,
             )
             return {
                 "status": "Index ingested successfully",
@@ -1525,6 +1712,7 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
             )
         return JSONResponse(content=direct_response)
 
+    workspace_documents = get_document_category_store().list_documents(query_request.index_name)
     requested_filenames = _detect_requested_filenames(
         query_request.index_name,
         query_request.user_query,
@@ -1553,11 +1741,46 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
         query_request.user_query,
         query_request.selected_category,
     )
+    candidate_documents = workspace_documents
+    if requested_category:
+        candidate_documents = [item for item in candidate_documents if item.get("category") == requested_category] or candidate_documents
+    if requested_filenames:
+        allowed = set(requested_filenames)
+        candidate_documents = [item for item in candidate_documents if item.get("filename") in allowed] or candidate_documents
+    ranked_candidate_documents = _rank_documents_for_query(query_request.user_query, candidate_documents)
+    metadata_answer = _metadata_response_for_policy_question(query_request.user_query, ranked_candidate_documents[:5])
+    if metadata_answer:
+        full_response = {
+            "mode": "answer",
+            "response": {"content": metadata_answer["content"]},
+            "citation": metadata_answer["citation"],
+            "selected_category": requested_category,
+        }
+        if query_request.thread_id:
+            thread_store.save_message(
+                thread_id=query_request.thread_id,
+                role="user",
+                content=query_request.user_query,
+                user_id=auth_user,
+                user_identifier=auth_identifier,
+                thread_name=(query_request.user_query or "New chat")[:80],
+            )
+            thread_store.save_message(
+                thread_id=query_request.thread_id,
+                role="assistant",
+                content=metadata_answer["content"],
+                user_id=auth_user,
+                user_identifier=auth_identifier,
+                thread_name=(query_request.user_query or "New chat")[:80],
+            )
+        if cache_manager and cache_key:
+            cache_manager.set(cache_key, full_response)
+        return JSONResponse(content=full_response)
     if not requested_category and len(categories) > 1 and query_needs_clarification(query_request.user_query):
         disambiguation = build_disambiguation_payload(
             query=query_request.user_query,
             categories=categories,
-            documents=get_document_category_store().list_documents(query_request.index_name),
+            documents=workspace_documents,
             selected_category=query_request.selected_category,
             document_filter=query_request.document_filter,
         )
@@ -1607,6 +1830,17 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
             retrieved_docs = [doc for doc in retrieved_docs if doc.metadata.get("filename") in allowed_filenames]
         else:
             retrieved_docs = _filter_docs_by_filename(retrieved_docs, query_request.document_filter)
+        if not requested_filenames and not query_request.document_filter and ranked_candidate_documents:
+            top_document_score = _document_keyword_score(query_request.user_query, ranked_candidate_documents[0])
+            if top_document_score > 0:
+                top_filenames = {
+                    str(item.get("filename", ""))
+                    for item in ranked_candidate_documents[:2]
+                    if _document_keyword_score(query_request.user_query, item) >= max(2.5, top_document_score - 1.5)
+                }
+                filtered_docs = [doc for doc in retrieved_docs if doc.metadata.get("filename") in top_filenames]
+                if filtered_docs:
+                    retrieved_docs = filtered_docs
     prepared_context["docs"] = retrieved_docs
     processed_metadata = preprocess_metadata(retrieved_docs)
     citations_task = asyncio.create_task(

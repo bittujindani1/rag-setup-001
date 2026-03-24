@@ -100,19 +100,23 @@ class DynamoDBDocumentCategoryStore:
         content_type: str,
         size_bytes: int,
         storage_url: str,
+        metadata: Optional[Dict] = None,
     ) -> None:
+        item = {
+            "index_filename": f"{index_name}#{filename}",
+            "index_name": index_name,
+            "filename": filename,
+            "category": category,
+            "source_type": source_type,
+            "content_type": content_type,
+            "size_bytes": int(size_bytes),
+            "storage_url": storage_url,
+            "updated_at": int(time.time()),
+        }
+        if metadata:
+            item.update(metadata)
         self.table.put_item(
-            Item={
-                "index_filename": f"{index_name}#{filename}",
-                "index_name": index_name,
-                "filename": filename,
-                "category": category,
-                "source_type": source_type,
-                "content_type": content_type,
-                "size_bytes": int(size_bytes),
-                "storage_url": storage_url,
-                "updated_at": int(time.time()),
-            }
+            Item=item
         )
 
     def delete_document(self, index_name: str, filename: str) -> None:
