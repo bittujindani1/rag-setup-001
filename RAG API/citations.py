@@ -45,14 +45,33 @@ def _refresh_presigned_pdf_url(pdf_url: str) -> str:
         return pdf_url
 
 
+def _extract_filename_key(citation: dict) -> str:
+    """Get a stable dedup key from filename, falling back to extracting name from pdf_url."""
+    filename = (citation.get("filename") or "").strip()
+    if filename:
+        return filename.lower()
+    pdf_url = citation.get("pdf_url") or ""
+    if pdf_url:
+        # Extract filename from S3 presigned URL or plain path
+        path = urllib.parse.urlparse(pdf_url).path
+        basename = path.rsplit("/", 1)[-1] if "/" in path else path
+        # Strip query params that might leak in
+        basename = basename.split("?")[0]
+        if basename:
+            return basename.lower()
+    return ""
+
+
 def deduplicate_citations(citations):
     unique_citations = []
     seen = {}
 
     for citation in citations:
         citation["pdf_url"] = _refresh_presigned_pdf_url(citation.get("pdf_url"))
-        # Deduplicate by filename only — presigned URLs differ per chunk
-        citation_key = citation.get("filename") or citation.get("pdf_url") or id(citation)
+        citation_key = _extract_filename_key(citation)
+        if not citation_key:
+            unique_citations.append(citation)
+            continue
 
         if citation_key not in seen:
             seen[citation_key] = citation
