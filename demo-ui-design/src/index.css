@@ -1,0 +1,213 @@
+@import "tailwindcss";
+
+:root {
+  /* Core Tokens - Dark */
+  --bg-primary: #0B0F17;
+  --bg-secondary: #111827;
+  --bg-card: #1F2937;
+  --text-primary: #F9FAFB;
+  --text-secondary: #D1D5DB;
+  --text-muted: #9CA3AF;
+  --border-base: #374151;
+  --accent: #2563EB;
+  --accent-hover: #1D4ED8;
+  --accent-foreground: #FFFFFF;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --error: #EF4444;
+
+  /* Spacing & Radius */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --radius-2xl: 2rem;
+}
+
+.light {
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #F9FAFB;
+  --bg-card: #FFFFFF;
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-muted: #6B7280;
+  --border-base: #E5E7EB;
+  --accent: #2563EB;
+  --accent-hover: #1D4ED8;
+  --accent-foreground: #FFFFFF;
+}
+
+@theme {
+  --color-background: var(--bg-primary);
+  --color-surface: var(--bg-secondary);
+  --color-surface-secondary: var(--bg-card);
+  --color-border: var(--border-base);
+  --color-border-strong: var(--border-base);
+  --color-foreground: var(--text-primary);
+  --color-muted: var(--text-secondary);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+
+  --font-sans: "Inter", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Inter", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
+
+  --shadow-premium: 0 12px 28px -18px rgba(0, 0, 0, 0.28);
+  --shadow-glass: 0 8px 20px -18px rgba(0, 0, 0, 0.18);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased transition-colors duration-300 selection:bg-accent/20 selection:text-foreground;
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display tracking-tight font-semibold text-foreground;
+  }
+
+  h1 { font-size: 24px; font-weight: 700; }
+  h2 { font-size: 20px; font-weight: 600; }
+  h3 { font-size: 16px; font-weight: 600; }
+  p, span, label, input, textarea, button {
+    letter-spacing: 0.01em;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 75%, white 0%);
+    outline-offset: 2px;
+  }
+
+  /* Custom Scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-foreground/15 rounded-full hover:bg-foreground/25 transition-colors;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@layer utilities {
+  .glass {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-base);
+  }
+
+  .glass-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-base);
+    box-shadow: var(--shadow-glass);
+  }
+
+  .premium-gradient {
+    background-image: none;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .premium-border {
+    border: 1px solid var(--border-base);
+    transition: border-color 180ms ease, background-color 180ms ease;
+  }
+}
+
+/* Markdown Styles */
+.markdown-body {
+  @apply text-[15px] leading-7;
+  color: var(--text-primary);
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  @apply font-bold mt-8 mb-4 tracking-tight;
+  color: var(--foreground);
+}
+
+.markdown-body h1 { @apply text-2xl; }
+.markdown-body h2 { @apply text-xl; }
+.markdown-body h3 { @apply text-lg; }
+
+.markdown-body p {
+  @apply mb-4;
+  color: var(--text-primary);
+}
+
+.markdown-body ul, .markdown-body ol {
+  @apply mb-4 pl-6 list-disc space-y-1.5;
+  color: var(--text-primary);
+}
+
+.markdown-body li {
+  color: var(--foreground);
+}
+
+.markdown-body strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.markdown-body table {
+  @apply w-full border-collapse mb-6 text-sm overflow-hidden rounded-xl;
+  border: 1px solid var(--border-strong);
+}
+
+.markdown-body th, .markdown-body td {
+  @apply p-3 text-left;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+.markdown-body th {
+  @apply font-semibold text-xs uppercase tracking-wider;
+  background-color: color-mix(in srgb, var(--bg-card) 96%, transparent);
+  color: var(--text-secondary);
+}
+
+.markdown-body code {
+  @apply bg-accent/10 px-1.5 py-0.5 rounded-md font-mono text-accent font-medium text-[13px];
+}
+
+.markdown-body pre {
+  @apply p-5 rounded-2xl overflow-x-auto mb-6 shadow-inner;
+  background-color: color-mix(in srgb, var(--bg-card) 92%, transparent);
+  border: 1px solid var(--border-base);
+}
+
+.markdown-body blockquote {
+  @apply border-l-4 border-accent/50 pl-4 italic my-6;
+  color: var(--text-secondary);
+}

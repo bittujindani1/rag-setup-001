@@ -218,6 +218,27 @@ def _thread_workspace(thread: dict | None) -> str | None:
     return metadata.get("workspace_id") or metadata.get("index_name")
 
 
+def _list_persisted_workspaces() -> list[str]:
+    workspace_ids: set[str] = set()
+
+    for thread in thread_store.list_all_threads(limit=5000):
+        workspace_id = _thread_workspace(thread)
+        if not workspace_id:
+            continue
+        try:
+            workspace_ids.add(_validate_index_name(workspace_id))
+        except HTTPException:
+            LOGGER.warning("Skipping invalid workspace id from thread metadata: %s", workspace_id)
+
+    for index_name in get_document_category_store().list_index_names():
+        try:
+            workspace_ids.add(_validate_index_name(index_name))
+        except HTTPException:
+            LOGGER.warning("Skipping invalid workspace id from document metadata: %s", index_name)
+
+    return sorted(workspace_ids)
+
+
 def _clear_thread_history(thread_id: str) -> None:
     thread = thread_store.load_thread(thread_id)
     if not thread:
@@ -548,6 +569,87 @@ def _load_docs_for_filenames(index_name: str, filenames: list[str], max_docs: in
                 )
             )
     return loaded_docs
+
+
+def _deduplicate_retrieved_docs(documents: list[Document]) -> list[Document]:
+    deduplicated: list[Document] = []
+    seen: set[tuple[str, str, str]] = set()
+    for doc in documents:
+        metadata = doc.metadata or {}
+        key = (
+            str(metadata.get("filename", "")),
+            str(metadata.get("section_id", "")),
+            (doc.page_content or "")[:160],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(doc)
+    return deduplicated
+
+
+def _is_multi_policy_question(query: str, candidate_documents: list[dict[str, Any]]) -> bool:
+    lowered = _normalize_search_text(query)
+    if len(candidate_documents) < 2:
+        return False
+
+    document_types = {
+        str(item.get("policy_type", "") or "").strip().lower()
+        for item in candidate_documents
+        if str(item.get("policy_type", "") or "").strip()
+    }
+    has_multiple_policy_types = len(document_types) >= 2
+    asks_broad_process = any(
+        phrase in lowered
+        for phrase in (
+            "claim process",
+            "claims process",
+            "how to claim",
+            "how do i claim",
+            "claim procedure",
+            "filing a claim",
+            "claims filing",
+        )
+    )
+    asks_to_compare = any(
+        phrase in lowered
+        for phrase in (
+            "both",
+            "each",
+            "respectively",
+            "compare",
+            "difference",
+            "for health and travel",
+        )
+    )
+    return has_multiple_policy_types and (asks_broad_process or asks_to_compare)
+
+
+def _augment_docs_for_multi_policy_question(
+    index_name: str,
+    query: str,
+    retrieved_docs: list[Document],
+    ranked_candidate_documents: list[dict[str, Any]],
+) -> list[Document]:
+    if not _is_multi_policy_question(query, ranked_candidate_documents):
+        return retrieved_docs
+
+    selected_filenames: list[str] = []
+    seen_types: set[str] = set()
+    for item in ranked_candidate_documents:
+        filename = str(item.get("filename", "")).strip()
+        if not filename:
+            continue
+        policy_type = str(item.get("policy_type", "") or "").strip().lower() or filename.lower()
+        if policy_type in seen_types:
+            continue
+        seen_types.add(policy_type)
+        selected_filenames.append(filename)
+        if len(selected_filenames) >= 3:
+            break
+
+    supplemental_docs = _load_docs_for_filenames(index_name, selected_filenames, max_docs=4)
+    return _deduplicate_retrieved_docs([*retrieved_docs, *supplemental_docs])
 
 
 def _download_s3_object_to_temp(
@@ -1275,6 +1377,11 @@ async def list_threads(limit: int = 50, workspace_id: str | None = None):
     return {"threads": [_serialize_thread(thread) for thread in threads]}
 
 
+@app.get("/SFRAG/workspaces")
+async def list_workspaces():
+    return {"workspaces": _list_persisted_workspaces()}
+
+
 @app.get("/SFRAG/threads/{thread_id}")
 async def get_thread(thread_id: str, workspace_id: str | None = None):
     normalized_workspace = _validate_index_name(workspace_id) if workspace_id else None
@@ -1849,6 +1956,12 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
                     filtered_docs = [doc for doc in retrieved_docs if doc.metadata.get("filename") in top_filenames]
                     if filtered_docs:
                         retrieved_docs = filtered_docs
+        retrieved_docs = _augment_docs_for_multi_policy_question(
+            query_request.index_name,
+            query_request.user_query,
+            retrieved_docs,
+            ranked_candidate_documents,
+        )
     prepared_context["docs"] = retrieved_docs
     processed_metadata = preprocess_metadata(retrieved_docs)
     citations_task = asyncio.create_task(

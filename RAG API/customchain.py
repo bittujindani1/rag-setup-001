@@ -24,6 +24,7 @@ If the answer is not available in the provided context, say exactly:
 "The documents do not contain this information."
 Keep responses direct and professional. Do not mention that the answer was retrieved.
 When the context contains chunks from multiple source documents (marked with [Source: filename]), include information from ALL relevant sources and mention the source document name when citing specific facts.
+If multiple policy documents are relevant, separate the answer by policy or filename so the user can clearly see each document's answer instead of getting one blended summary.
 """
 
 
@@ -117,16 +118,29 @@ class MultiModalRAGChainWithHistory:
         docs = self._limit_docs_to_budget(docs)
         context = split_image_text_types(docs)
         formatted_texts = "\n".join(context["texts"])
+        source_filenames = []
+        for doc in docs:
+            filename = str(doc.metadata.get("filename", "") or "").strip()
+            if filename and filename not in source_filenames:
+                source_filenames.append(filename)
         output_instruction = (
             "Format the answer as a markdown table. Keep the table complete, concise, and directly grounded in the context. "
             "If helpful, add one short sentence after the table, but do not replace the table with bullets or prose."
             if _wants_table_response(question)
             else "Use concise prose or bullets unless the user explicitly requested a table."
         )
+        source_instruction = (
+            "Relevant source documents in this context: "
+            + ", ".join(source_filenames)
+            + ". If more than one of these documents answers the question, provide a separate answer for each relevant document."
+            if len(source_filenames) > 1
+            else ""
+        )
         prompt = (
             f"Conversation history:\n{self._history_to_text(history_messages)}\n\n"
             f"User-provided question: {question}\n\n"
             f"Output formatting instruction: {output_instruction}\n\n"
+            f"{source_instruction}\n\n"
             "Text and/or tables retrieved are as follows from which to only answer:\n"
             f"{formatted_texts}"
         )
