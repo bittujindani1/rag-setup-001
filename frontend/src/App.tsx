@@ -581,7 +581,7 @@ function App() {
         .includes(term),
     )
   }, [analyticsDatasetFilter, analyticsDatasets])
-  const logoSrc = theme === 'dark' ? '/logo_dark.PNG' : '/logo_light.PNG'
+  const logoSrc = '/htc_global_services_20260326.PNG'
   const isAdmin = authSession?.role === 'admin'
 
   function pushToast(message: string, tone: Toast['tone']) {
@@ -1172,7 +1172,7 @@ function App() {
     return (
       <div className="auth-shell">
         <form className="auth-card" onSubmit={handleLogin}>
-          <img className="brand-logo auth-logo" src={logoSrc} alt="RAG demo logo" />
+          <img className="brand-logo auth-logo" src={logoSrc} alt="HTC Global Services" />
           <p className="eyebrow">Secure Access</p>
           <h1>RAG Demo Login</h1>
           <p className="helper-text">Sign in to access the chat, analytics, and agent workflows.</p>
@@ -1198,7 +1198,7 @@ function App() {
       <aside className="sidebar">
         <div className="panel brand-panel">
           <div className="brand-row">
-            <img className="brand-logo" src={logoSrc} alt="RAG demo logo" />
+            <img className="brand-logo" src={logoSrc} alt="HTC Global Services" />
             <div className="session-card">
               <div className="session-copy">
                 <span className="session-label">Signed in</span>

@@ -57,8 +57,17 @@ For backend changes:
 - Lambda must be updated to use the new image tag
 
 For frontend changes:
-- build the frontend locally
+- build the correct frontend locally
 - sync the generated `dist` bundle to the frontend S3 bucket
+
+Important:
+- the main hosted site is deployed from `frontend`
+- the `/v2/` site is deployed from `demo-ui-design`
+- pushing to git does not make frontend changes live by itself
+- frontend changes are live only after the matching `dist` folder is synced to S3
+- use the attached HTC logo asset only
+- main frontend logo asset path: `frontend/public/htc_global_services_20260326.PNG`
+- v2 frontend logo asset path: `demo-ui-design/public/htc_global_services_20260326.PNG`
 
 ## 5. Check GitHub Actions
 
@@ -164,13 +173,73 @@ Run those from:
 frontend
 ```
 
+### 7.2a If You Are Deploying The Main Frontend
+
+Run those commands from:
+
+```text
+frontend
+```
+
+### 7.2b If You Are Deploying The V2 Frontend
+
+Set Node path first:
+
+```powershell
+$env:Path='C:\Users\dhairya.jindani\Downloads\npm code\node-v22.14.0-win-x64;'+$env:Path
+```
+
+Then run:
+
+```powershell
+npm run build
+```
+
+Run that from:
+
+```text
+demo-ui-design
+```
+
 ### 7.3 Deploy Frontend To S3
+
+#### Main frontend deploy
 
 ```powershell
 $py='C:\Users\dhairya.jindani\Documents\AI-coe projects\Call Analyzer\.venv\Scripts\python.exe'
 $src='C:\Users\dhairya.jindani\Documents\AI-coe projects\Rag\frontend\dist'
-& $py -m awscli s3 sync $src 's3://rag-serverless-frontend' --delete
+& $py -m awscli s3 sync $src 's3://rag-serverless-frontend' --delete --exclude 'v2/*'
 ```
+
+This updates the main site at the bucket root.
+
+Important:
+- keep `--exclude 'v2/*'` in the main frontend deploy command
+- otherwise the root sync can delete the deployed `/v2` site assets
+
+#### V2 frontend deploy
+
+```powershell
+$py='C:\Users\dhairya.jindani\Documents\AI-coe projects\Call Analyzer\.venv\Scripts\python.exe'
+$src='C:\Users\dhairya.jindani\Documents\AI-coe projects\Rag\demo-ui-design\dist'
+& $py -m awscli s3 sync $src 's3://rag-serverless-frontend/v2' --delete
+```
+
+This updates:
+
+```text
+http://rag-serverless-frontend.s3-website.ap-south-1.amazonaws.com/v2/index.html
+```
+
+Important:
+- do not deploy `frontend/dist` to the `/v2` path
+- do not assume `/v2` is rebuilt by the main frontend deploy
+- if you changed `demo-ui-design`, you must explicitly sync `demo-ui-design/dist` to `s3://rag-serverless-frontend/v2`
+- if you changed logo branding, rebuild and deploy both `frontend` and `demo-ui-design` when both experiences use the logo
+
+Recommended deploy order when both changed:
+1. deploy `frontend` to the bucket root with `--exclude 'v2/*'`
+2. deploy `demo-ui-design` to `s3://rag-serverless-frontend/v2`
 
 ### 7.4 Browser Check
 
@@ -178,6 +247,10 @@ After frontend deploy:
 - hard refresh the browser
 - confirm new UI changes are visible
 - if needed, open the hosted site directly
+
+Recommended direct URLs:
+- main site: `http://rag-serverless-frontend.s3-website.ap-south-1.amazonaws.com/`
+- v2 site: `http://rag-serverless-frontend.s3-website.ap-south-1.amazonaws.com/v2/index.html`
 
 ## 8. Minimum Functional Smoke Test
 
@@ -237,4 +310,8 @@ Use this every time:
 - GitHub Actions editor extension is optional and not required for deployments
 - backend code changes are not live until Lambda points to the new image
 - frontend code changes are not live until the built assets are synced to S3
+- `frontend` and `demo-ui-design` are separate deploy targets
+- `frontend` deploys the main site
+- `demo-ui-design` deploys the `/v2/` experience
+- both UIs should use the shared HTC Global Services image asset, not generated text or alternate logo files
 - if a change affects existing indexed data behavior, you may need to re-upload documents or rebuild data for the improvement to fully apply
