@@ -1,0 +1,29 @@
+[
+  {
+    "query": "Compare all policies coverage",
+    "expected_documents": [
+      "health_insurance_demo.pdf",
+      "sample_travel_insurance_policy_test.pdf"
+    ]
+  },
+  {
+    "query": "Clause 4.2 waiting period",
+    "expected_documents": [
+      "health_insurance_demo.pdf"
+    ]
+  },
+  {
+    "query": "Claim process and reimbursement flow",
+    "expected_documents": [
+      "health_insurance_demo.pdf",
+      "sample_travel_insurance_policy_test.pdf"
+    ]
+  },
+  {
+    "query": "benefits of policy",
+    "expected_documents": [
+      "health_insurance_demo.pdf",
+      "sample_travel_insurance_policy_test.pdf"
+    ]
+  }
+]

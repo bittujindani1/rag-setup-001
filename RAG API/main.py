@@ -33,6 +33,7 @@ from query_classifier import classify_query_route
 from sql_validator import validate_sql
 from document_support import (
     build_text_result,
+    enrich_chunk_metadata_with_parents,
     extract_text_chunks,
     extract_ticket_chunks,
     get_max_upload_bytes,
@@ -1016,6 +1017,7 @@ def _index_text_document(
     texts_list = [textresult[key]["output"] for key in sorted(textresult.keys(), key=int)]
     text_summaries, table_summaries = generate_text_summaries(texts_list, [], summarize_texts=True)
     text_metadata = create_text_metadata(textresult, file_name, input_file_url)
+    text_metadata = enrich_chunk_metadata_with_parents(texts_list, text_metadata)
     vectorstore = get_vectorstore(index_name)
     _, indexed_chunks = create_multi_vector_retriever(
         vectorstore,
@@ -1257,6 +1259,8 @@ def _ingest_local_file(
             image_metadata = create_image_metadata(imageresult, file_name, input_file_url)
             table_metadata = create_table_metadata(tableresult, file_name, input_file_url)
             text_metadata = create_text_metadata(textresult, file_name, input_file_url)
+            text_metadata = enrich_chunk_metadata_with_parents(texts_list, text_metadata)
+            table_metadata = enrich_chunk_metadata_with_parents(table_list, table_metadata)
 
             vectorstore = get_vectorstore(index_name)
             _, indexed_chunks = create_multi_vector_retriever(

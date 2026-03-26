@@ -3,6 +3,7 @@ from langchain_community.utilities.redis import get_client
 import logging
 import urllib
 import os
+import re
 import sys
 from pathlib import Path
 from langchain_core.retrievers import BaseRetriever
@@ -137,6 +138,22 @@ def _expand_query(query: str) -> str:
     return f"{query} {' '.join(expansions)}"
 
 
+def _query_variants(query: str) -> list[str]:
+    variants = [query]
+    expanded = _expand_query(query)
+    if expanded != query:
+        variants.append(expanded)
+
+    lowered = (query or "").lower()
+    if " and " in lowered:
+        for part in [item.strip() for item in re.split(r"\band\b", query, flags=re.IGNORECASE) if item.strip()]:
+            variants.append(part)
+            expanded_part = _expand_query(part)
+            if expanded_part != part:
+                variants.append(expanded_part)
+    return list(dict.fromkeys(item for item in variants if item))
+
+
 def _doc_key(doc: Document) -> tuple[str, str, str]:
     metadata = doc.metadata or {}
     return (
@@ -169,6 +186,25 @@ def _apply_doc_diversity(documents: list[Document], max_chunks_per_doc: int = 3)
         if filename:
             counts[filename] += 1
     return diversified
+
+
+def _promote_to_parent_context(documents: list[Document]) -> list[Document]:
+    promoted: list[Document] = []
+    seen_parent_keys: set[tuple[str, str]] = set()
+    for doc in documents:
+        metadata = dict(doc.metadata)
+        parent_text = str(metadata.get("parent_text", "") or "").strip()
+        parent_id = str(metadata.get("parent_id", "") or "")
+        if parent_text and parent_id:
+            parent_key = (str(metadata.get("filename", "") or ""), parent_id)
+            if parent_key in seen_parent_keys:
+                continue
+            seen_parent_keys.add(parent_key)
+            metadata["section_id"] = parent_id
+            promoted.append(Document(page_content=parent_text, metadata=metadata))
+            continue
+        promoted.append(doc)
+    return promoted
 
 
 def _rrf_merge(dense_docs: list[Document], sparse_docs: list[Document], limit: int) -> list[Document]:
@@ -281,25 +317,32 @@ class AWSMultiVectorRetriever(BaseRetriever):
         reranker_config = self.config.get("reranker", {})
         initial_k = int(reranker_config.get("initial_k", self.k))
         final_k = int(reranker_config.get("final_k", self.config.get("retrieval_k", 10)))
-        expanded_query = _expand_query(query)
-        summary_docs = self.vectorstore.similarity_search(expanded_query, k=initial_k)
-        hydrated_docs = self._hydrate(summary_docs)
-        sparse_docs = self._sparse_search(expanded_query, k=initial_k)
+        query_variants = _query_variants(query)
+        dense_candidates: list[Document] = []
+        sparse_candidates: list[Document] = []
+        for variant in query_variants:
+            summary_docs = self.vectorstore.similarity_search(variant, k=initial_k)
+            dense_candidates.extend(self._hydrate(summary_docs))
+            sparse_candidates.extend(self._sparse_search(variant, k=initial_k))
+        hydrated_docs = _deduplicate_documents(dense_candidates)
+        sparse_docs = _deduplicate_documents(sparse_candidates)
         hybrid_candidates = _rrf_merge(hydrated_docs, sparse_docs, limit=max(initial_k * 2, final_k * 3))
         hybrid_candidates = _apply_doc_diversity(_deduplicate_documents(hybrid_candidates), max_chunks_per_doc=3)
         if reranker_config.get("enabled", True):
             final_docs = rerank_chunks(
-                expanded_query,
+                query,
                 hybrid_candidates,
                 final_k=final_k,
                 max_context_chars=MAX_CONTEXT_CHARS,
                 max_chunks_per_doc=3,
+                bedrock_client=get_bedrock_client(),
             )
         else:
             final_docs = hybrid_candidates[:final_k]
-        final_docs = _apply_doc_diversity(final_docs, max_chunks_per_doc=3)
+        final_docs = _promote_to_parent_context(_apply_doc_diversity(final_docs, max_chunks_per_doc=3))
         LOGGER.info(
-            "retrieval_dense=%d retrieval_sparse=%d hybrid_candidates=%d reranked=%d",
+            "retrieval_variants=%d retrieval_dense=%d retrieval_sparse=%d hybrid_candidates=%d reranked=%d",
+            len(query_variants),
             len(hydrated_docs),
             len(sparse_docs),
             len(hybrid_candidates),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from typing import Any, Iterable, Iterator, List, Optional
 
@@ -37,6 +38,16 @@ class BedrockClient:
                 retries={"max_attempts": 3, "mode": "standard"},
             ),
         )
+        self.agent_runtime_client = boto3.client(
+            "bedrock-agent-runtime",
+            region_name=region_name,
+            config=Config(
+                connect_timeout=10,
+                read_timeout=120,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
+        )
+        self.rerank_model_arn = os.getenv("BEDROCK_RERANK_MODEL_ARN", "").strip()
 
     def _invoke_json(self, model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -252,3 +263,49 @@ class BedrockClient:
         chunk_size = 120
         for index in range(0, len(text), chunk_size):
             yield text[index : index + chunk_size]
+
+    def rerank_texts(self, query: str, documents: List[str], top_n: int = 10) -> List[dict[str, Any]] | None:
+        if not self.rerank_model_arn or not documents:
+            return None
+        try:
+            response = self.agent_runtime_client.rerank(
+                queries=[
+                    {
+                        "type": "TEXT",
+                        "textQuery": {"text": query},
+                    }
+                ],
+                rerankingConfiguration={
+                    "type": "BEDROCK_RERANKING_MODEL",
+                    "bedrockRerankingConfiguration": {
+                        "modelConfiguration": {
+                            "modelArn": self.rerank_model_arn,
+                        },
+                        "numberOfResults": top_n,
+                    },
+                },
+                sources=[
+                    {
+                        "type": "INLINE",
+                        "inlineDocumentSource": {
+                            "type": "TEXT",
+                            "textDocument": {"text": document},
+                        },
+                    }
+                    for document in documents
+                ],
+            )
+            results = response.get("results", [])
+            normalized = [
+                {
+                    "index": item.get("index"),
+                    "relevance_score": item.get("relevanceScore"),
+                }
+                for item in results
+                if item.get("index") is not None and item.get("relevanceScore") is not None
+            ]
+            LOGGER.info("Bedrock rerank returned results=%s", len(normalized))
+            return normalized
+        except (BotoCoreError, ClientError, TimeoutError):
+            LOGGER.exception("Bedrock rerank failed; falling back to heuristic reranking.")
+            return None

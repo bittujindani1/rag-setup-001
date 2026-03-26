@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import csv
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Iterable, List
@@ -324,17 +325,98 @@ def extract_ticket_chunks(file_path: str) -> List[str]:
     raise ValueError(f"Ticket extraction not supported for '{extension}'.")
 
 
+def enrich_chunk_metadata_with_parents(
+    chunks: List[str],
+    metadata_list: List[dict],
+    *,
+    target_parent_chars: int = 3200,
+    max_children_per_parent: int = 4,
+) -> List[dict]:
+    if not chunks or not metadata_list:
+        return metadata_list
+
+    enriched: List[dict] = []
+    parent_index = 0
+    child_index = 0
+    total_chunks = len(chunks)
+    while child_index < total_chunks:
+        group_texts: List[str] = []
+        group_indices: List[int] = []
+        group_chars = 0
+        while child_index < total_chunks and len(group_indices) < max_children_per_parent:
+            chunk_text = chunks[child_index]
+            projected = group_chars + len(chunk_text)
+            if group_indices and projected > target_parent_chars:
+                break
+            group_texts.append(chunk_text)
+            group_indices.append(child_index)
+            group_chars = projected
+            child_index += 1
+
+        parent_index += 1
+        parent_id = f"parent:{parent_index}"
+        parent_text = "\n\n".join(group_texts).strip()
+        for group_index in group_indices:
+            metadata = dict(metadata_list[group_index]) if group_index < len(metadata_list) else {}
+            metadata["parent_id"] = parent_id
+            metadata["parent_text"] = parent_text
+            enriched.append(metadata)
+
+    return enriched if len(enriched) == len(metadata_list) else metadata_list
+
+
 def _split_text(text: str) -> List[str]:
     cleaned = (text or "").strip()
     if not cleaned:
         return []
+
+    def _looks_like_heading(block: str) -> bool:
+        stripped = block.strip()
+        if not stripped:
+            return False
+        if len(stripped) <= 90 and stripped.endswith(":"):
+            return True
+        if len(stripped) <= 80 and stripped == stripped.upper() and any(char.isalpha() for char in stripped):
+            return True
+        if re.match(r"^(section|clause|article|chapter)\s+[a-z0-9.:-]+", stripped, re.IGNORECASE):
+            return True
+        return False
+
+    def _structured_blocks(value: str) -> List[str]:
+        normalized = value.replace("\r\n", "\n")
+        blocks: List[str] = []
+        current: List[str] = []
+        clause_pattern = re.compile(r"^\s*(?:\d+(?:\.\d+)+|\(?[a-zA-Z]\)|[-*•])\s+")
+        for line in normalized.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                if current:
+                    current.append("")
+                continue
+            if _looks_like_heading(stripped) or clause_pattern.match(stripped):
+                if current:
+                    blocks.append("\n".join(current).strip())
+                current = [stripped]
+            else:
+                current.append(stripped)
+        if current:
+            blocks.append("\n".join(current).strip())
+        return [block for block in blocks if block]
+
     splitter = RecursiveCharacterTextSplitter(
         # Slightly smaller chunks with more overlap improve recall without over-fragmenting the text.
         chunk_size=900,
         chunk_overlap=200,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
-    return [chunk.strip() for chunk in splitter.split_text(cleaned) if chunk.strip()]
+    structured_blocks = _structured_blocks(cleaned)
+    chunks: List[str] = []
+    for block in structured_blocks:
+        if len(block) <= 900:
+            chunks.append(block)
+            continue
+        chunks.extend(chunk.strip() for chunk in splitter.split_text(block) if chunk.strip())
+    return chunks
 
 
 def _build_ticket_summary_chunks(rows: List[dict]) -> List[str]:

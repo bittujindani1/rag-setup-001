@@ -1,12 +1,13 @@
 import asyncio
 import logging
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import List
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from image_utils import split_image_text_types
+from image_utils import is_image_data, looks_like_base64, split_image_text_types
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -117,7 +118,7 @@ class MultiModalRAGChainWithHistory:
     def _build_prompt(self, question: str, history_messages: List, docs: List) -> tuple[str, List[str]]:
         docs = self._limit_docs_to_budget(docs)
         context = split_image_text_types(docs)
-        formatted_texts = "\n".join(context["texts"])
+        formatted_texts = self._format_docs_for_prompt(docs, context["texts"])
         source_filenames = []
         for doc in docs:
             filename = str(doc.metadata.get("filename", "") or "").strip()
@@ -147,16 +148,66 @@ class MultiModalRAGChainWithHistory:
         return prompt, context["images"]
 
     def _limit_docs_to_budget(self, docs: List) -> List:
-        ordered_docs = sorted(docs, key=lambda doc: float(doc.metadata.get("score", 0.0) or 0.0), reverse=True)
+        grouped_docs: dict[str, list] = defaultdict(list)
+        for doc in sorted(docs, key=lambda item: float(item.metadata.get("score", 0.0) or 0.0), reverse=True):
+            grouped_docs[str(doc.metadata.get("filename", "") or "unknown")].append(doc)
+
+        ordered_groups = sorted(
+            grouped_docs.values(),
+            key=lambda group: float(group[0].metadata.get("score", 0.0) or 0.0),
+            reverse=True,
+        )
         limited_docs = []
         total_chars = 0
-        for doc in ordered_docs:
-            doc_chars = len(doc.page_content or "")
-            if limited_docs and total_chars + doc_chars > MAX_CONTEXT_CHARS:
-                continue
-            total_chars += doc_chars
-            limited_docs.append(doc)
+        pending = True
+        round_index = 0
+        while pending:
+            pending = False
+            for group in ordered_groups:
+                if round_index >= len(group):
+                    continue
+                pending = True
+                doc = group[round_index]
+                doc_chars = len(doc.page_content or "")
+                if limited_docs and total_chars + doc_chars > MAX_CONTEXT_CHARS:
+                    continue
+                total_chars += doc_chars
+                limited_docs.append(doc)
+            round_index += 1
         return limited_docs
+
+    def _format_docs_for_prompt(self, docs: List, text_blocks: List[str]) -> str:
+        text_docs = []
+        for doc in docs:
+            doc_content = doc.page_content if hasattr(doc, "page_content") else doc
+            if isinstance(doc_content, bytes):
+                doc_content = doc_content.decode("utf-8")
+            if isinstance(doc_content, str) and looks_like_base64(doc_content) and is_image_data(doc_content):
+                continue
+            text_docs.append(doc)
+
+        grouped_blocks: dict[str, list[tuple[float, str, str]]] = defaultdict(list)
+        for doc, text in zip(text_docs, text_blocks):
+            filename = str(doc.metadata.get("filename", "") or "unknown")
+            grouped_blocks[filename].append(
+                (
+                    float(doc.metadata.get("score", 0.0) or 0.0),
+                    str(doc.metadata.get("page_numbers", doc.metadata.get("page_number", "")) or ""),
+                    text,
+                )
+            )
+
+        ordered_groups = sorted(
+            grouped_blocks.items(),
+            key=lambda item: max((entry[0] for entry in item[1]), default=0.0),
+            reverse=True,
+        )
+        sections: list[str] = []
+        for filename, entries in ordered_groups:
+            ordered_entries = sorted(entries, key=lambda item: (-item[0], item[1]))
+            sections.append(f"## Source: {filename}")
+            sections.extend(entry[2] for entry in ordered_entries)
+        return "\n\n".join(sections)
 
     async def prepare_context(self, user_input: str, session_id: str):
         history = build_chat_history(session_id)
