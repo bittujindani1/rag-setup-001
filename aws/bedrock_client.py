@@ -48,6 +48,10 @@ class BedrockClient:
             ),
         )
         self.rerank_model_arn = os.getenv("BEDROCK_RERANK_MODEL_ARN", "").strip()
+        self.rerank_model_id = os.getenv("BEDROCK_RERANK_MODEL_ID", "amazon.rerank-v1:0").strip()
+        if not self.rerank_model_arn and self.rerank_model_id:
+            self.rerank_model_arn = f"arn:aws:bedrock:{region_name}::foundation-model/{self.rerank_model_id}"
+            LOGGER.info("Using derived Bedrock rerank model ARN for model_id=%s", self.rerank_model_id)
 
     def _invoke_json(self, model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:

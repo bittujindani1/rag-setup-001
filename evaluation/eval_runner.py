@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from base64 import b64encode
 from pathlib import Path
 from statistics import mean
 
@@ -13,6 +14,9 @@ TEST_QUERY_PATH = ROOT_DIR / "test_queries.json"
 BASE_URL = os.getenv("RAG_API_URL", "http://localhost:8000")
 INDEX_NAME = os.getenv("RAG_EVAL_INDEX", "test")
 SESSION_ID = os.getenv("RAG_EVAL_SESSION_ID", "eval-session")
+AUTH_USERNAME = os.getenv("RAG_EVAL_USERNAME", "")
+AUTH_PASSWORD = os.getenv("RAG_EVAL_PASSWORD", "")
+AUTH_HEADER = os.getenv("RAG_EVAL_AUTH_HEADER", "")
 
 
 def _load_cases() -> list[dict]:
@@ -21,6 +25,12 @@ def _load_cases() -> list[dict]:
 
 
 def _run_query(question: str) -> dict:
+    headers = {}
+    if AUTH_HEADER:
+        headers["Authorization"] = AUTH_HEADER
+    elif AUTH_USERNAME and AUTH_PASSWORD:
+        token = b64encode(f"{AUTH_USERNAME}:{AUTH_PASSWORD}".encode("utf-8")).decode("utf-8")
+        headers["Authorization"] = f"Basic {token}"
     response = requests.post(
         f"{BASE_URL}/SFRAG/retrieval",
         json={
@@ -28,6 +38,7 @@ def _run_query(question: str) -> dict:
             "index_name": INDEX_NAME,
             "session_id": SESSION_ID,
         },
+        headers=headers,
         timeout=120,
     )
     response.raise_for_status()

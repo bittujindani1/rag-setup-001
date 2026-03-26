@@ -1017,7 +1017,7 @@ def _index_text_document(
     texts_list = [textresult[key]["output"] for key in sorted(textresult.keys(), key=int)]
     text_summaries, table_summaries = generate_text_summaries(texts_list, [], summarize_texts=True)
     text_metadata = create_text_metadata(textresult, file_name, input_file_url)
-    text_metadata = enrich_chunk_metadata_with_parents(texts_list, text_metadata)
+    text_metadata = enrich_chunk_metadata_with_parents(texts_list, text_metadata, parent_namespace="text")
     vectorstore = get_vectorstore(index_name)
     _, indexed_chunks = create_multi_vector_retriever(
         vectorstore,
@@ -1259,8 +1259,8 @@ def _ingest_local_file(
             image_metadata = create_image_metadata(imageresult, file_name, input_file_url)
             table_metadata = create_table_metadata(tableresult, file_name, input_file_url)
             text_metadata = create_text_metadata(textresult, file_name, input_file_url)
-            text_metadata = enrich_chunk_metadata_with_parents(texts_list, text_metadata)
-            table_metadata = enrich_chunk_metadata_with_parents(table_list, table_metadata)
+            text_metadata = enrich_chunk_metadata_with_parents(texts_list, text_metadata, parent_namespace="text")
+            table_metadata = enrich_chunk_metadata_with_parents(table_list, table_metadata, parent_namespace="table")
 
             vectorstore = get_vectorstore(index_name)
             _, indexed_chunks = create_multi_vector_retriever(

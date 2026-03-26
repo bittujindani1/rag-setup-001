@@ -331,6 +331,7 @@ def enrich_chunk_metadata_with_parents(
     *,
     target_parent_chars: int = 3200,
     max_children_per_parent: int = 4,
+    parent_namespace: str = "chunk",
 ) -> List[dict]:
     if not chunks or not metadata_list:
         return metadata_list
@@ -354,7 +355,7 @@ def enrich_chunk_metadata_with_parents(
             child_index += 1
 
         parent_index += 1
-        parent_id = f"parent:{parent_index}"
+        parent_id = f"{parent_namespace}:parent:{parent_index}"
         parent_text = "\n\n".join(group_texts).strip()
         for group_index in group_indices:
             metadata = dict(metadata_list[group_index]) if group_index < len(metadata_list) else {}
