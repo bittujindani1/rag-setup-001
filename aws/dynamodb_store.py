@@ -87,8 +87,23 @@ class DynamoDBFilenameIndex:
 
 
 class DynamoDBDocumentCategoryStore:
+    META_FILENAME = "__index_meta__"
+
     def __init__(self, table_name: str, region_name: str) -> None:
         self.table = boto3.resource("dynamodb", region_name=region_name).Table(table_name)
+
+    def _touch_index(self, index_name: str, updated_at: int | None = None) -> int:
+        version = int(updated_at or time.time())
+        self.table.put_item(
+            Item={
+                "index_filename": f"{index_name}#{self.META_FILENAME}",
+                "index_name": index_name,
+                "filename": self.META_FILENAME,
+                "item_type": "meta",
+                "updated_at": version,
+            }
+        )
+        return version
 
     def upsert_document(
         self,
@@ -102,25 +117,30 @@ class DynamoDBDocumentCategoryStore:
         storage_url: str,
         metadata: Optional[Dict] = None,
     ) -> None:
+        updated_at = int(time.time())
         item = {
             "index_filename": f"{index_name}#{filename}",
             "index_name": index_name,
             "filename": filename,
+            "item_type": "document",
             "category": category,
             "source_type": source_type,
             "content_type": content_type,
             "size_bytes": int(size_bytes),
             "storage_url": storage_url,
-            "updated_at": int(time.time()),
+            "updated_at": updated_at,
         }
         if metadata:
             item.update(metadata)
         self.table.put_item(
             Item=item
         )
+        # Keep a per-index version marker so any ingest/delete invalidates retrieval caches.
+        self._touch_index(index_name, updated_at=updated_at)
 
     def delete_document(self, index_name: str, filename: str) -> None:
         self.table.delete_item(Key={"index_filename": f"{index_name}#{filename}"})
+        self._touch_index(index_name)
 
     def list_documents(self, index_name: str) -> List[Dict]:
         try:
@@ -135,8 +155,22 @@ class DynamoDBDocumentCategoryStore:
                 FilterExpression=Attr("index_name").eq(index_name),
             )
             items = response.get("Items", [])
+        items = [
+            item
+            for item in items
+            if item.get("item_type") != "meta" and item.get("filename") != self.META_FILENAME
+        ]
         items.sort(key=lambda item: item.get("updated_at", 0), reverse=True)
         return items
+
+    def get_index_version(self, index_name: str) -> int:
+        meta_item = self.table.get_item(
+            Key={"index_filename": f"{index_name}#{self.META_FILENAME}"}
+        ).get("Item")
+        if meta_item and meta_item.get("updated_at") is not None:
+            return int(meta_item["updated_at"])
+        documents = self.list_documents(index_name)
+        return max((int(item.get("updated_at", 0) or 0) for item in documents), default=0)
 
     def list_categories(self, index_name: str) -> List[Dict[str, int]]:
         category_counts: Dict[str, int] = {}

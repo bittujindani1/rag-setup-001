@@ -64,6 +64,7 @@ def main() -> int:
             retrieval_k=5,
             index_name="service-check",
             model_name=suffix,
+            corpus_version="v1",
         )
         assert cache.get(cache_key) is None
         cache.set(cache_key, {"answer": "Trip delay"})

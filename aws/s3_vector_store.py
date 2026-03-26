@@ -18,13 +18,24 @@ LOGGER = logging.getLogger(__name__)
 
 
 class S3VectorStore:
-    def __init__(self, bucket_name: str, index_name: str, embedding_client, metrics_collector: MetricsCollector | None = None) -> None:
+    def __init__(
+        self,
+        bucket_name: str,
+        index_name: str,
+        embedding_client,
+        metrics_collector: MetricsCollector | None = None,
+        corpus_version: str = "",
+        index_cache_ttl_seconds: int = 300,
+    ) -> None:
         self.bucket_name = bucket_name
         self.index_name = index_name
         self.embedding_client = embedding_client
         self.metrics = metrics_collector
+        self.corpus_version = corpus_version
+        self.index_cache_ttl_seconds = index_cache_ttl_seconds
         self.s3 = boto3.client("s3", region_name=embedding_client.region_name)
         self._index_cache: List[Dict] | None = None
+        self._index_cache_loaded_at = 0.0
 
     def _prefix(self) -> str:
         return f"indices/{self.index_name}/vectors/"
@@ -50,19 +61,29 @@ class S3VectorStore:
             ContentType="application/json",
         )
         self._index_cache = index_entries
+        self._index_cache_loaded_at = time.time()
+
+    def refresh_index_cache(self) -> None:
+        self._index_cache = None
+        self._index_cache_loaded_at = 0.0
 
     def _load_index(self) -> List[Dict]:
-        if self._index_cache is not None:
+        if self._index_cache is not None and (time.time() - self._index_cache_loaded_at) < self.index_cache_ttl_seconds:
             return self._index_cache
         try:
             payload = self._read_json(self._index_key())
             self._index_cache = payload if isinstance(payload, list) else []
+            self._index_cache_loaded_at = time.time()
         except ClientError as exc:
             error_code = exc.response.get("Error", {}).get("Code")
             if error_code not in {"NoSuchKey", "404"}:
                 LOGGER.exception("Failed to load embeddings index for %s", self.index_name)
             self._index_cache = []
+            self._index_cache_loaded_at = time.time()
         return self._index_cache
+
+    def get_index_entries(self) -> List[Dict]:
+        return list(self._load_index())
 
     def add_documents(self, documents: Iterable[Document]) -> None:
         index_entries = self._load_index().copy()

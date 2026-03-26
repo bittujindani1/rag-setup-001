@@ -114,14 +114,15 @@ def build_chat_history(session_id: str) -> DynamoDBChatMessageHistory:
     )
 
 
-@lru_cache(maxsize=32)
-def get_s3_vector_store(index_name: str) -> S3VectorStore:
+@lru_cache(maxsize=64)
+def get_s3_vector_store(index_name: str, corpus_version: str = "") -> S3VectorStore:
     config = get_config()
     return S3VectorStore(
         bucket_name=config["s3_bucket_vectors"],
         index_name=index_name,
         embedding_client=get_bedrock_client(),
         metrics_collector=get_metrics_collector(),
+        corpus_version=corpus_version,
     )
 
 

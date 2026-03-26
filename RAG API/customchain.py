@@ -16,7 +16,7 @@ from provider_factory import build_chat_history, get_bedrock_client
 
 
 LOGGER = logging.getLogger(__name__)
-MAX_CONTEXT_CHARS = 6000
+MAX_CONTEXT_CHARS = 18000
 ANSWER_SYSTEM_PROMPT = """
 You are a RAG synthesis assistant who gives final answers to user queries based on images, tables, and text retrieved.
 Answer only using the provided context. Do not use outside knowledge, internet knowledge, or assumptions.
@@ -190,7 +190,7 @@ class MultiModalRAGChainWithHistory:
                 prompt,
                 images,
                 ANSWER_SYSTEM_PROMPT,
-                1024,
+                2048,
                 0.1,
             )
         else:
@@ -198,7 +198,7 @@ class MultiModalRAGChainWithHistory:
                 self.bedrock.generate_text,
                 prompt,
                 ANSWER_SYSTEM_PROMPT,
-                1024,
+                2048,
                 0.1,
             )
 

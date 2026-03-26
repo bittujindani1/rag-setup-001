@@ -329,8 +329,9 @@ def _split_text(text: str) -> List[str]:
     if not cleaned:
         return []
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200,
-        chunk_overlap=150,
+        # Slightly smaller chunks with more overlap improve recall without over-fragmenting the text.
+        chunk_size=900,
+        chunk_overlap=200,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
     return [chunk.strip() for chunk in splitter.split_text(cleaned) if chunk.strip()]

@@ -13,6 +13,7 @@ from langchain_core.documents import Document
 from langchain_community.retrievers import BM25Retriever
 from langchain_openai import AzureOpenAIEmbeddings
 from pydantic import ConfigDict
+from collections import defaultdict
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -73,10 +74,10 @@ def _retrieve_documents(retriever, query: str):
 
 
 
-def create_retriever(index_name: str):
+def create_retriever(index_name: str, corpus_version: str = ""):
     config = get_config()
     if config.get("vector_store") == "s3":
-        return AWSMultiVectorRetriever(index_name=index_name)
+        return AWSMultiVectorRetriever(index_name=index_name, corpus_version=corpus_version)
 
     if not (embedding_function and OPENSEARCH_URL and awsauth and redis_url):
         raise RuntimeError("OpenSearch/Redis retriever dependencies are not configured.")
@@ -113,75 +114,83 @@ def create_retriever(index_name: str):
 
 #Define Ensemble Retriever logic
 def create_ensemble_retriever(vectorstore_retriever, query):
-    # Step 1: Retrieve documents from vectorstore retriever
-    vector_docs = _retrieve_documents(vectorstore_retriever, query)
-    LOGGER.info("Vector docs retrieved count=%s", len(vector_docs))
-    if not vector_docs:
-        LOGGER.warning("No documents retrieved for query=%s. Using dummy document.", query)
-        vector_docs = [
-            Document(
-                page_content="No relevant content available.",
-                metadata={"min_role": query, "info": "dummy"}
-            )
-        ]
-    document_objects = []
-    for doc in vector_docs:
-        if isinstance(doc, Document):
-            document_objects.append(doc)
-        elif isinstance(doc, bytes):
-            document_objects.append(Document(page_content=doc.decode("utf-8"), metadata={}))
-        else:
-            document_objects.append(Document(page_content=str(doc), metadata={}))
-    # Step 2: Initialize BM25Retriever
-    # img_docs=
-    keyword_retriever = BM25Retriever.from_documents(document_objects)
-    keyword_retriever.k = 5
+    # For the AWS retriever, retrieval is already true hybrid over the full corpus.
+    if isinstance(vectorstore_retriever, AWSMultiVectorRetriever):
+        LOGGER.info("Using built-in hybrid retriever query=%s", query)
+        return vectorstore_retriever
+    return vectorstore_retriever
 
-    class StaticDocumentRetriever(BaseRetriever):
-        model_config = ConfigDict(arbitrary_types_allowed=True)
-        documents: list[Document]
 
-        def _get_relevant_documents(self, query: str, *, run_manager=None):
-            return list(self.documents)
+def _expand_query(query: str) -> str:
+    lowered = (query or "").lower()
+    expansions: list[str] = []
+    synonym_map = {
+        "claim process": ["claim procedure", "claims procedure", "reimbursement flow", "filing a claim"],
+        "waiting period": ["cooling period", "initial waiting period"],
+        "clause": ["section", "article"],
+    }
+    for phrase, synonyms in synonym_map.items():
+        if phrase in lowered:
+            expansions.extend(synonyms)
+    if not expansions:
+        return query
+    return f"{query} {' '.join(expansions)}"
 
-        async def _aget_relevant_documents(self, query: str, *, run_manager=None):
-            return list(self.documents)
 
-    class LightweightEnsembleRetriever(BaseRetriever):
-        model_config = ConfigDict(arbitrary_types_allowed=True)
-        primary: BaseRetriever
-        secondary: BaseRetriever
-
-        def _merge(self, primary_docs, secondary_docs):
-            merged = []
-            seen = set()
-            for doc in list(primary_docs) + list(secondary_docs):
-                key = (
-                    doc.metadata.get("chunk_id"),
-                    doc.metadata.get("document_id"),
-                    doc.page_content[:200],
-                )
-                if key in seen:
-                    continue
-                seen.add(key)
-                merged.append(doc)
-            return merged
-
-        def _get_relevant_documents(self, query: str, *, run_manager=None):
-            primary_docs = _retrieve_documents(self.primary, query)
-            secondary_docs = _retrieve_documents(self.secondary, query)
-            return self._merge(primary_docs, secondary_docs)
-
-        async def _aget_relevant_documents(self, query: str, *, run_manager=None):
-            return self._get_relevant_documents(query, run_manager=run_manager)
-
-    # Step 3: Combine both retrievers without depending on optional langchain.retrievers package.
-    ensemble_retriever = LightweightEnsembleRetriever(
-        primary=StaticDocumentRetriever(documents=document_objects),
-        secondary=keyword_retriever,
+def _doc_key(doc: Document) -> tuple[str, str, str]:
+    metadata = doc.metadata or {}
+    return (
+        str(metadata.get("chunk_id") or metadata.get("section_id") or ""),
+        str(metadata.get("document_id") or metadata.get("filename") or ""),
+        (doc.page_content or "")[:200],
     )
-    LOGGER.info("Created ensemble retriever query=%s", query)
-    return ensemble_retriever
+
+
+def _deduplicate_documents(documents: list[Document]) -> list[Document]:
+    deduplicated: list[Document] = []
+    seen: set[tuple[str, str, str]] = set()
+    for doc in documents:
+        key = _doc_key(doc)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(doc)
+    return deduplicated
+
+
+def _apply_doc_diversity(documents: list[Document], max_chunks_per_doc: int = 3) -> list[Document]:
+    diversified: list[Document] = []
+    counts: dict[str, int] = defaultdict(int)
+    for doc in documents:
+        filename = str(doc.metadata.get("filename", "") or "")
+        if filename and counts[filename] >= max_chunks_per_doc:
+            continue
+        diversified.append(doc)
+        if filename:
+            counts[filename] += 1
+    return diversified
+
+
+def _rrf_merge(dense_docs: list[Document], sparse_docs: list[Document], limit: int) -> list[Document]:
+    scored: dict[tuple[str, str, str], tuple[float, Document]] = {}
+    for rank, doc in enumerate(dense_docs, start=1):
+        key = _doc_key(doc)
+        score = 1.0 / (60 + rank)
+        current = scored.get(key)
+        scored[key] = (score + (current[0] if current else 0.0), current[1] if current else doc)
+    for rank, doc in enumerate(sparse_docs, start=1):
+        key = _doc_key(doc)
+        score = 1.0 / (60 + rank)
+        current = scored.get(key)
+        base_doc = current[1] if current else doc
+        scored[key] = (score + (current[0] if current else 0.0), base_doc)
+
+    merged = []
+    for score, doc in sorted(scored.values(), key=lambda item: item[0], reverse=True):
+        metadata = dict(doc.metadata)
+        metadata["rrf_score"] = score
+        merged.append(Document(page_content=doc.page_content, metadata=metadata))
+    return merged[:limit]
 
 
 class AWSMultiVectorRetriever(BaseRetriever):
@@ -191,19 +200,25 @@ class AWSMultiVectorRetriever(BaseRetriever):
     config: dict
     vectorstore: object
     docstore: object
+    corpus_version: str = ""
     id_key: str = "doc_id"
-    k: int = 5
+    k: int = 40
+    corpus_documents: list[Document] | None = None
+    bm25_retriever: object | None = None
 
-    def __init__(self, index_name: str) -> None:
+    def __init__(self, index_name: str, corpus_version: str = "") -> None:
         config = get_config()
         reranker_config = config.get("reranker", {})
         super().__init__(
             index_name=index_name,
             config=config,
-            vectorstore=get_s3_vector_store(index_name),
+            vectorstore=get_s3_vector_store(index_name, corpus_version),
             docstore=get_doc_store(),
+            corpus_version=corpus_version,
             id_key="doc_id",
-            k=int(reranker_config.get("initial_k", 20)),
+            k=int(reranker_config.get("initial_k", 40)),
+            corpus_documents=None,
+            bm25_retriever=None,
         )
 
     def _hydrate(self, summary_docs):
@@ -219,22 +234,77 @@ class AWSMultiVectorRetriever(BaseRetriever):
             )
         return hydrated
 
+    def _load_full_corpus_docs(self) -> list[Document]:
+        if self.corpus_documents is not None:
+            return self.corpus_documents
+        index_entries = self.vectorstore.get_index_entries()
+        doc_ids = [entry.get("doc_id") for entry in index_entries if entry.get("doc_id")]
+        raw_docs = self.docstore.mget(doc_ids) if doc_ids else []
+        corpus_documents: list[Document] = []
+        for entry, raw_doc in zip(index_entries, raw_docs):
+            metadata = dict(entry.get("metadata", {}))
+            metadata.update(
+                {
+                    "filename": metadata.get("filename"),
+                    "document_id": metadata.get("document_id", metadata.get("filename")),
+                    "chunk_id": metadata.get("chunk_id", entry.get("doc_id")),
+                    "section_id": metadata.get("section_id", metadata.get("chunk_id", entry.get("doc_id"))),
+                }
+            )
+            corpus_documents.append(
+                Document(
+                    page_content=raw_doc or entry.get("page_content", ""),
+                    metadata=metadata,
+                )
+            )
+        self.corpus_documents = corpus_documents
+        return corpus_documents
+
+    def _get_bm25_retriever(self):
+        if self.bm25_retriever is None:
+            corpus_documents = self._load_full_corpus_docs()
+            self.bm25_retriever = BM25Retriever.from_documents(corpus_documents)
+        return self.bm25_retriever
+
+    def _sparse_search(self, query: str, *, k: int) -> list[Document]:
+        bm25_retriever = self._get_bm25_retriever()
+        bm25_retriever.k = k
+        sparse_docs = _retrieve_documents(bm25_retriever, query)
+        enriched_docs: list[Document] = []
+        for rank, doc in enumerate(sparse_docs, start=1):
+            metadata = dict(doc.metadata)
+            metadata["lexical_rank"] = rank
+            enriched_docs.append(Document(page_content=doc.page_content, metadata=metadata))
+        return enriched_docs
+
     def _get_relevant_documents(self, query: str, *, run_manager=None):
         reranker_config = self.config.get("reranker", {})
         initial_k = int(reranker_config.get("initial_k", self.k))
-        final_k = int(reranker_config.get("final_k", self.config.get("retrieval_k", 4)))
-        summary_docs = self.vectorstore.similarity_search(query, k=initial_k)
+        final_k = int(reranker_config.get("final_k", self.config.get("retrieval_k", 10)))
+        expanded_query = _expand_query(query)
+        summary_docs = self.vectorstore.similarity_search(expanded_query, k=initial_k)
         hydrated_docs = self._hydrate(summary_docs)
+        sparse_docs = self._sparse_search(expanded_query, k=initial_k)
+        hybrid_candidates = _rrf_merge(hydrated_docs, sparse_docs, limit=max(initial_k * 2, final_k * 3))
+        hybrid_candidates = _apply_doc_diversity(_deduplicate_documents(hybrid_candidates), max_chunks_per_doc=3)
         if reranker_config.get("enabled", True):
             final_docs = rerank_chunks(
-                query,
-                hydrated_docs,
+                expanded_query,
+                hybrid_candidates,
                 final_k=final_k,
                 max_context_chars=MAX_CONTEXT_CHARS,
+                max_chunks_per_doc=3,
             )
         else:
-            final_docs = hydrated_docs[:final_k]
-        LOGGER.info("retrieval_initial=%d reranked=%d", len(hydrated_docs), len(final_docs))
+            final_docs = hybrid_candidates[:final_k]
+        final_docs = _apply_doc_diversity(final_docs, max_chunks_per_doc=3)
+        LOGGER.info(
+            "retrieval_dense=%d retrieval_sparse=%d hybrid_candidates=%d reranked=%d",
+            len(hydrated_docs),
+            len(sparse_docs),
+            len(hybrid_candidates),
+            len(final_docs),
+        )
         return final_docs
 
     async def _aget_relevant_documents(self, query: str, *, run_manager=None):

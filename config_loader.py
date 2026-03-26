@@ -17,7 +17,7 @@ _DEFAULTS: Dict[str, Any] = {
     "llm_model": "anthropic.claude-3-haiku-20240307-v1:0",
     "bedrock_fallback_model": "anthropic.claude-3-sonnet-20240229-v1:0",
     "aws_region": os.getenv("AWS_REGION", "ap-south-1"),
-    "retrieval_k": 5,
+    "retrieval_k": 10,
     "cache_ttl_seconds": 86400,
     "dynamodb_rate_limit_table": "rag_rate_limits",
     "dynamodb_thread_table": "rag_chat_threads",
@@ -31,8 +31,8 @@ _DEFAULTS: Dict[str, Any] = {
     "rate_limit_requests_per_minute": 15,
     "reranker": {
         "enabled": True,
-        "initial_k": 20,
-        "final_k": 4,
+        "initial_k": 40,
+        "final_k": 10,
     },
 }
 

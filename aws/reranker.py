@@ -9,7 +9,7 @@ from langchain_core.documents import Document
 
 LOGGER = logging.getLogger(__name__)
 TOKEN_PATTERN = re.compile(r"\w+")
-MAX_CONTEXT_CHARS = 6000
+MAX_CONTEXT_CHARS = 18000
 
 
 def _tokenize(text: str) -> set[str]:
@@ -20,8 +20,9 @@ def rerank_chunks(
     query: str,
     chunks: Iterable[Document],
     *,
-    final_k: int = 4,
+    final_k: int = 10,
     max_context_chars: int = MAX_CONTEXT_CHARS,
+    max_chunks_per_doc: int = 3,
 ) -> List[Document]:
     query_terms = _tokenize(query)
     scored_chunks: List[tuple[float, Document]] = []
@@ -50,16 +51,22 @@ def rerank_chunks(
     scored_chunks.sort(key=lambda item: item[0], reverse=True)
 
     final_chunks: List[Document] = []
+    per_document_counts: dict[str, int] = {}
     total_chars = 0
     for score, chunk in scored_chunks:
         if len(final_chunks) >= final_k:
             break
+        filename = str(chunk.metadata.get("filename", "") or "")
+        if filename and per_document_counts.get(filename, 0) >= max_chunks_per_doc:
+            continue
         chunk_chars = len(chunk.page_content or "")
         if final_chunks and total_chars + chunk_chars > max_context_chars:
             continue
         total_chars += chunk_chars
         chunk.metadata["score"] = score
         final_chunks.append(chunk)
+        if filename:
+            per_document_counts[filename] = per_document_counts.get(filename, 0) + 1
 
     LOGGER.info(
         "Reranker selected final_chunks=%s total_context_chars=%s",

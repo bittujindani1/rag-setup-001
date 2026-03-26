@@ -66,9 +66,11 @@ def create_multi_vector_retriever(
         doc_ids = [str(uuid.uuid4()) for _ in doc_contents]
         summary_docs = [
             Document(
-                page_content=s,
+                # Embed the raw chunk text for primary retrieval; keep the LLM summary as metadata only.
+                page_content=doc_contents[i],
                 metadata={
                     **metadata,
+                    "retrieval_summary": s,
                     id_key: doc_ids[i],
                     "document_id": filename,
                     "section_id": f"{filename}:section:{i+1}",

@@ -39,9 +39,10 @@ class DynamoDBCacheManager:
         retrieval_k: int,
         index_name: str,
         model_name: str,
+        corpus_version: str = "",
     ) -> str:
         normalized_query = cls._normalize_query(query)
-        raw = f"{normalized_query}:{retrieval_k}:{index_name}:{model_name}".encode("utf-8")
+        raw = f"{normalized_query}:{retrieval_k}:{index_name}:{model_name}:{corpus_version}".encode("utf-8")
         return hashlib.sha256(raw).hexdigest()
 
     def get(self, cache_key: str) -> Optional[Any]:

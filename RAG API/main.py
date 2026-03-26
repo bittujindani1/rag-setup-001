@@ -652,6 +652,23 @@ def _augment_docs_for_multi_policy_question(
     return _deduplicate_retrieved_docs([*retrieved_docs, *supplemental_docs])
 
 
+def _query_prefers_cross_document_answer(query: str) -> bool:
+    lowered = _normalize_search_text(query)
+    return any(
+        phrase in lowered
+        for phrase in (
+            "across all",
+            "all policies",
+            "all documents",
+            "compare",
+            "comparison",
+            "both",
+            "each",
+            "respectively",
+        )
+    )
+
+
 def _download_s3_object_to_temp(
     index_name: str,
     s3_key: str,
@@ -1820,6 +1837,7 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
         return JSONResponse(content=direct_response)
 
     workspace_documents = get_document_category_store().list_documents(query_request.index_name)
+    corpus_version = str(get_document_category_store().get_index_version(query_request.index_name))
     requested_filenames = _detect_requested_filenames(
         query_request.index_name,
         query_request.user_query,
@@ -1837,6 +1855,7 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
             retrieval_k=int(config.get("retrieval_k", 5)),
             index_name=query_request.index_name,
             model_name=config.get("llm_model", ""),
+            corpus_version=corpus_version,
         )
         cached_response = cache_manager.get(cache_key)
         if cached_response:
@@ -1883,7 +1902,12 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
         if cache_manager and cache_key:
             cache_manager.set(cache_key, full_response)
         return JSONResponse(content=full_response)
-    if not requested_category and len(categories) > 1 and query_needs_clarification(query_request.user_query):
+    if (
+        not requested_category
+        and len(categories) > 1
+        and query_needs_clarification(query_request.user_query)
+        and not _query_prefers_cross_document_answer(query_request.user_query)
+    ):
         disambiguation = build_disambiguation_payload(
             query=query_request.user_query,
             categories=categories,
@@ -1916,7 +1940,7 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
             cache_manager.set(cache_key, clarification)
         return JSONResponse(content=clarification)
     
-    retriever = create_retriever(query_request.index_name)
+    retriever = create_retriever(query_request.index_name, corpus_version=corpus_version)
 
     ensemble = create_ensemble_retriever(retriever, query_request.user_query)
     LOGGER.info("Created ensemble retriever index_name=%s", query_request.index_name)
@@ -1937,25 +1961,6 @@ async def multi_modal_query(query_request: QueryRequest, request: Request):
             retrieved_docs = [doc for doc in retrieved_docs if doc.metadata.get("filename") in allowed_filenames]
         else:
             retrieved_docs = _filter_docs_by_filename(retrieved_docs, query_request.document_filter)
-        if not requested_filenames and not query_request.document_filter and ranked_candidate_documents:
-            top_document_score = _document_keyword_score(query_request.user_query, ranked_candidate_documents[0])
-            if top_document_score > 0:
-                all_scores = [
-                    (str(item.get("filename", "")), _document_keyword_score(query_request.user_query, item))
-                    for item in ranked_candidate_documents
-                ]
-                # Only narrow down when the top doc is clearly more relevant than the rest;
-                # if multiple docs score similarly, keep them all so generic queries
-                # (e.g. "types of coverage") search across all documents.
-                second_best = all_scores[1][1] if len(all_scores) > 1 else 0.0
-                if top_document_score - second_best > 3.0:
-                    top_filenames = {
-                        name for name, score in all_scores
-                        if score >= max(2.5, top_document_score - 1.5)
-                    }
-                    filtered_docs = [doc for doc in retrieved_docs if doc.metadata.get("filename") in top_filenames]
-                    if filtered_docs:
-                        retrieved_docs = filtered_docs
         retrieved_docs = _augment_docs_for_multi_policy_question(
             query_request.index_name,
             query_request.user_query,

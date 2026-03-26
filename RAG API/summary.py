@@ -12,6 +12,8 @@ from provider_factory import get_bedrock_client
 
 def generate_text_summaries(texts, tables, summarize_texts=True):
     client = get_bedrock_client()
+    # These summaries remain useful for metadata and answer synthesis, but raw chunk text
+    # is now the primary retrieval input used for embeddings.
     prompt_text = """
 You are an AI assistant tasked with summarizing tables and text for optimized retrieval.
 Capture the main themes, important keywords, structure, key facts, and retrieval-friendly details.

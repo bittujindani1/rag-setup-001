@@ -19,10 +19,10 @@ dynamodb_thread_table: rag_chat_threads
 dynamodb_document_categories_table: rag_document_categories
 dynamodb_ingest_jobs_table: rag_ingest_jobs
 dynamodb_feedback_table: rag_user_feedback
-retrieval_k: 5
+retrieval_k: 10
 cache_ttl_seconds: 86400
 rate_limit_requests_per_minute: 15
 reranker:
   enabled: true
-  initial_k: 20
-  final_k: 4
+  initial_k: 40
+  final_k: 10

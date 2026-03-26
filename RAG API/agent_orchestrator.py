@@ -157,11 +157,9 @@ def _extract_sql_from_text(text: str) -> str | None:
 def _rag_retrieve(query: str, index_name: str) -> str:
     """Retrieve relevant documents from RAG for the given query."""
     try:
-        from vectordb_utils import get_vectorstore
         from customretriever import create_retriever
 
-        vectorstore = get_vectorstore(index_name)
-        retriever = create_retriever(vectorstore)
+        retriever = create_retriever(index_name)
         if hasattr(retriever, "invoke"):
             docs = retriever.invoke(query)
         else:
