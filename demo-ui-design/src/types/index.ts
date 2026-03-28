@@ -173,3 +173,36 @@ export interface FinalReport {
   content: string;
   kpis?: KpiCardData[];
 }
+
+export interface ModernizationGraphLink {
+  source: string;
+  target: string;
+  relation: string;
+  file?: string;
+}
+
+export interface ParagraphTranslationRecord {
+  paragraph_id: string;
+  status: 'translated' | 'flagged' | 'error';
+  cobol: string;
+  translated_code: string;
+  notes: string;
+}
+
+export interface ModernizationProgramSummary {
+  file_id: string;
+  status: string;
+  wave_plan?: Array<{ wave: number; programs: string[] }>;
+  risk_flags?: string[];
+  paragraph_status?: Record<string, string>;
+}
+
+export interface ModernizationProgramDetail {
+  program_id: string;
+  status: string;
+  artifacts: any;
+  paragraph_translation: {
+    paragraphs: ParagraphTranslationRecord[];
+    paragraph_status: Record<string, string>;
+  };
+}

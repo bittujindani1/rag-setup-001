@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar';
 import ChatTab from './components/ChatTab';
 import AnalyticsTab from './components/AnalyticsTab';
 import AgentsTab from './components/AgentsTab';
+import ModernizationTab from './components/ModernizationTab';
 import { Toaster } from 'sonner';
 import { Workspace, ChatThread } from './types';
 import * as api from './lib/api';
@@ -208,6 +209,7 @@ function AppContent() {
           {activeTab === 'agents' && (
             <AgentsTab workspaceId={activeWorkspaceId} indexName={activeWorkspaceId} />
           )}
+          {activeTab === 'modernization' && <ModernizationTab />}
         </div>
       </main>
 

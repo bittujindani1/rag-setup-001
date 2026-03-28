@@ -2,6 +2,7 @@ import {
   MessageSquare,
   BarChart3,
   Users,
+  Waypoints,
   Plus,
   Settings,
   LogOut,
@@ -54,6 +55,7 @@ export default function Sidebar({
     { id: 'chat', label: 'Chat', icon: MessageSquare },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'agents', label: 'Agents', icon: Users },
+    { id: 'modernization', label: 'Modernization', icon: Waypoints },
   ];
 
   return (

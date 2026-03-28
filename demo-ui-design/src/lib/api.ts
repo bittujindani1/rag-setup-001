@@ -1,4 +1,5 @@
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '');
+const MODERNIZATION_API_BASE = (import.meta.env.VITE_MODERNIZATION_API_BASE_URL ?? 'http://localhost:8004').replace(/\/+$/, '');
 const AUTH_KEY = 'rag-v2-auth';
 const PREFIX = '/SFRAG';
 
@@ -216,4 +217,43 @@ export function resetDemo() {
 
 export function getHealth() {
   return apiFetch<any>('/health');
+}
+
+/* ---------- modernization ---------- */
+
+async function modernizationFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${MODERNIZATION_API_BASE}${path}`, init);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Modernization request failed: ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export function listModernizationPrograms() {
+  return modernizationFetch<{ programs: any[] }>('/programs');
+}
+
+export function getModernizationProgram(programId: string) {
+  return modernizationFetch<any>(`/program/${encodeURIComponent(programId)}`);
+}
+
+export function getModernizationParagraph(paragraphId: string) {
+  return modernizationFetch<any>(`/paragraph/${encodeURIComponent(paragraphId)}`);
+}
+
+export function getModernizationGraph(programId: string) {
+  return modernizationFetch<any>(`/graph/${encodeURIComponent(programId)}`);
+}
+
+export function getWavePlan() {
+  return modernizationFetch<any>('/wave-plan');
+}
+
+export function approveModernization() {
+  return modernizationFetch<any>('/approve', { method: 'POST' });
+}
+
+export function retryModernization() {
+  return modernizationFetch<any>('/retry', { method: 'POST' });
 }
