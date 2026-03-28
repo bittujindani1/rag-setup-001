@@ -1,5 +1,7 @@
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000').replace(/\/+$/, '');
-const MODERNIZATION_API_BASE = (import.meta.env.VITE_MODERNIZATION_API_BASE_URL ?? 'http://localhost:8004').replace(/\/+$/, '');
+const MODERNIZATION_API_BASE = (
+  import.meta.env.VITE_MODERNIZATION_API_BASE_URL ?? 'https://znu5jwbbkvkhp52q7qbyzgqk2a0gfkfj.lambda-url.ap-south-1.on.aws'
+).replace(/\/+$/, '');
 const AUTH_KEY = 'rag-v2-auth';
 const PREFIX = '/SFRAG';
 
@@ -221,6 +223,10 @@ export function getHealth() {
 
 /* ---------- modernization ---------- */
 
+export function getModernizationApiBase() {
+  return MODERNIZATION_API_BASE;
+}
+
 async function modernizationFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${MODERNIZATION_API_BASE}${path}`, init);
   if (!res.ok) {
@@ -250,10 +256,18 @@ export function getWavePlan() {
   return modernizationFetch<any>('/wave-plan');
 }
 
-export function approveModernization() {
-  return modernizationFetch<any>('/approve', { method: 'POST' });
+export function approveModernization(programId: string) {
+  return modernizationFetch<any>('/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ program_id: programId }),
+  });
 }
 
-export function retryModernization() {
-  return modernizationFetch<any>('/retry', { method: 'POST' });
+export function retryModernization(programId: string) {
+  return modernizationFetch<any>('/retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ program_id: programId }),
+  });
 }

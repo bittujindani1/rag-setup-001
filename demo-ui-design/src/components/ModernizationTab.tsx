@@ -72,6 +72,17 @@ export default function ModernizationTab() {
   const [detail, setDetail] = useState<ModernizationProgramDetail>(fallbackDetail);
   const [graphLinks, setGraphLinks] = useState<ModernizationGraphLink[]>(fallbackGraph.graph.cross_program_links);
   const [loading, setLoading] = useState(true);
+  const [actionMessage, setActionMessage] = useState('');
+
+  const modernizationApiBase = api.getModernizationApiBase();
+  const actionsEnabled = useMemo(() => {
+    try {
+      const url = new URL(modernizationApiBase);
+      return url.hostname !== 'localhost' && url.hostname !== '127.0.0.1';
+    } catch {
+      return false;
+    }
+  }, [modernizationApiBase]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +138,32 @@ export default function ModernizationTab() {
   const paragraphs: ParagraphTranslationRecord[] = detail.paragraph_translation?.paragraphs ?? [];
   const riskFlags: string[] = detail.artifacts?.dashboard?.risk_flags ?? programs.find((item) => item.file_id === selectedProgram)?.risk_flags ?? [];
 
+  async function handleApprove() {
+    if (!actionsEnabled) {
+      setActionMessage('Approve is disabled in the live demo because no public modernization API endpoint is configured yet.');
+      return;
+    }
+    try {
+      await api.approveModernization(selectedProgram);
+      setActionMessage('Approve request sent successfully.');
+    } catch {
+      setActionMessage('Approve request failed. Verify the modernization API endpoint is reachable.');
+    }
+  }
+
+  async function handleRetry() {
+    if (!actionsEnabled) {
+      setActionMessage('Retry is disabled in the live demo because no public modernization API endpoint is configured yet.');
+      return;
+    }
+    try {
+      await api.retryModernization(selectedProgram);
+      setActionMessage('Retry request sent successfully.');
+    } catch {
+      setActionMessage('Retry request failed. Verify the modernization API endpoint is reachable.');
+    }
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-slate-950 text-slate-100">
       <div className="mx-auto flex max-w-7xl flex-col gap-6 p-6">
@@ -145,19 +182,40 @@ export default function ModernizationTab() {
             </div>
             <div className="flex items-center gap-3">
               <button
-                onClick={() => api.retryModernization().catch(() => undefined)}
-                className="rounded-2xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-cyan-400"
+                onClick={() => void handleRetry()}
+                disabled={!actionsEnabled}
+                className={`rounded-2xl border px-4 py-2 text-sm font-medium transition ${
+                  actionsEnabled
+                    ? 'border-slate-700 bg-slate-900 text-slate-100 hover:border-cyan-400'
+                    : 'cursor-not-allowed border-slate-800 bg-slate-900/70 text-slate-500'
+                }`}
               >
                 Retry
               </button>
               <button
-                onClick={() => api.approveModernization().catch(() => undefined)}
-                className="rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
+                onClick={() => void handleApprove()}
+                disabled={!actionsEnabled}
+                className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                  actionsEnabled
+                    ? 'bg-cyan-400 text-slate-950 hover:bg-cyan-300'
+                    : 'cursor-not-allowed bg-slate-700 text-slate-400'
+                }`}
               >
                 Approve
               </button>
             </div>
           </div>
+          {!actionsEnabled && (
+            <div className="mt-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
+              This live V2 view is running in demo mode. Modernization data can still be viewed, but `Approve` and `Retry`
+              need a public modernization API endpoint instead of the current local default: <span className="font-semibold">{modernizationApiBase}</span>
+            </div>
+          )}
+          {actionMessage && (
+            <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-900/80 p-4 text-sm text-slate-200">
+              {actionMessage}
+            </div>
+          )}
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
