@@ -244,8 +244,9 @@ export function getModernizationProgram(programId: string) {
   return modernizationFetch<any>(`/program/${encodeURIComponent(programId)}`);
 }
 
-export function getModernizationParagraph(paragraphId: string) {
-  return modernizationFetch<any>(`/paragraph/${encodeURIComponent(paragraphId)}`);
+export function getModernizationParagraph(paragraphId: string, programId?: string) {
+  const suffix = programId ? `?program_id=${encodeURIComponent(programId)}` : '';
+  return modernizationFetch<any>(`/paragraph/${encodeURIComponent(paragraphId)}${suffix}`);
 }
 
 export function getModernizationGraph(programId: string) {

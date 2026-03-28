@@ -153,6 +153,7 @@ export default function ModernizationTab() {
   const [usingFallback, setUsingFallback] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
   const pollRef = useRef<number | null>(null);
+  const requestRef = useRef(0);
 
   const wavePlan = useMemo(
     () => detail.artifacts?.wave_plan?.wave_plan ?? programs.find((item) => item.file_id === selectedProgram)?.wave_plan ?? [],
@@ -184,6 +185,7 @@ export default function ModernizationTab() {
 
   const loadProgram = useCallback(
     async (programId: string) => {
+      const requestId = ++requestRef.current;
       setIsLoading(true);
       setActionMessage('');
       try {
@@ -191,17 +193,30 @@ export default function ModernizationTab() {
           api.getModernizationProgram(programId),
           api.getModernizationGraph(programId),
         ]);
+        if (requestRef.current !== requestId) {
+          return;
+        }
+        const links = Array.isArray(graph.graph?.cross_program_links) ? graph.graph.cross_program_links : [];
         setDetail(program);
-        setGraphLinks(graph.graph?.cross_program_links ?? []);
+        setGraphLinks(links);
         setExecutionState(
           toExecutionState(
             program.execution_state ?? programs.find((item) => item.file_id === programId)?.execution_state,
             fallbackExecutionState,
           ),
         );
+        console.info('Modernization program loaded', {
+          programId,
+          graphLinkCount: links.length,
+          paragraphCount: program.paragraph_translation?.paragraphs?.length ?? 0,
+          executionId: program.execution_state?.executionId ?? program.execution_state?.execution_id,
+        });
         setError('');
         setUsingFallback(false);
       } catch (err) {
+        if (requestRef.current !== requestId) {
+          return;
+        }
         console.error('Modernization program load failed', { programId, err });
         setDetail(fallbackDetail);
         setGraphLinks(fallbackGraph.graph.cross_program_links);
@@ -209,7 +224,9 @@ export default function ModernizationTab() {
         setUsingFallback(true);
         setError('Live modernization data is temporarily unavailable. Showing fallback demo data.');
       } finally {
-        setIsLoading(false);
+        if (requestRef.current === requestId) {
+          setIsLoading(false);
+        }
       }
     },
     [programs],
