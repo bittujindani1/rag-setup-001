@@ -144,7 +144,7 @@ function toExecutionState(value: any, fallback?: ExecutionState): ExecutionState
 
 export default function ModernizationTab() {
   const [programs, setPrograms] = useState<ModernizationProgramSummary[]>(fallbackPrograms);
-  const [selectedProgram, setSelectedProgram] = useState('ACCTPROC');
+  const [selectedProgram, setSelectedProgram] = useState('');
   const [detail, setDetail] = useState<ModernizationProgramDetail>(fallbackDetail);
   const [graphLinks, setGraphLinks] = useState<ModernizationGraphLink[]>(fallbackGraph.graph.cross_program_links);
   const [executionState, setExecutionState] = useState<ExecutionState>(fallbackExecutionState);
@@ -167,10 +167,15 @@ export default function ModernizationTab() {
     try {
       const data = await api.listModernizationPrograms();
       if (data.programs?.length) {
-        setPrograms(data.programs);
+        const sortedPrograms = [...data.programs].sort((left: ModernizationProgramSummary, right: ModernizationProgramSummary) => {
+          const leftUpdated = Number(left.execution_state?.updatedAt ?? 0);
+          const rightUpdated = Number(right.execution_state?.updatedAt ?? 0);
+          return rightUpdated - leftUpdated;
+        });
+        setPrograms(sortedPrograms);
         setSelectedProgram((current) => {
-          const exists = data.programs.some((program: ModernizationProgramSummary) => program.file_id === current);
-          return exists ? current : data.programs[0].file_id;
+          const exists = sortedPrograms.some((program: ModernizationProgramSummary) => program.file_id === current);
+          return exists && current ? current : sortedPrograms[0].file_id;
         });
         setUsingFallback(false);
       }
@@ -243,6 +248,9 @@ export default function ModernizationTab() {
   }, [loadPrograms]);
 
   useEffect(() => {
+    if (!selectedProgram) {
+      return;
+    }
     void loadProgram(selectedProgram);
   }, [loadProgram, selectedProgram]);
 
