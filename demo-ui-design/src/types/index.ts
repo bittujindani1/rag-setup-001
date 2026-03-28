@@ -181,12 +181,21 @@ export interface ModernizationGraphLink {
   file?: string;
 }
 
+export interface ExecutionState {
+  executionId: string;
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
+  startedAt?: string;
+  updatedAt?: string;
+  rawStatus?: string;
+}
+
 export interface ParagraphTranslationRecord {
   paragraph_id: string;
   status: 'translated' | 'flagged' | 'error';
   cobol: string;
   translated_code: string;
   notes: string;
+  confidence?: number;
 }
 
 export interface ModernizationProgramSummary {
@@ -195,12 +204,14 @@ export interface ModernizationProgramSummary {
   wave_plan?: Array<{ wave: number; programs: string[] }>;
   risk_flags?: string[];
   paragraph_status?: Record<string, string>;
+  execution_state?: ExecutionState;
 }
 
 export interface ModernizationProgramDetail {
   program_id: string;
   status: string;
   artifacts: any;
+  execution_state?: ExecutionState;
   paragraph_translation: {
     paragraphs: ParagraphTranslationRecord[];
     paragraph_status: Record<string, string>;

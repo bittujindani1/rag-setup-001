@@ -256,6 +256,10 @@ export function getWavePlan() {
   return modernizationFetch<any>('/wave-plan');
 }
 
+export function getExecutionStatus(executionId: string) {
+  return modernizationFetch<any>(`/execution/${encodeURIComponent(executionId)}`);
+}
+
 export function approveModernization(programId: string) {
   return modernizationFetch<any>('/approve', {
     method: 'POST',
