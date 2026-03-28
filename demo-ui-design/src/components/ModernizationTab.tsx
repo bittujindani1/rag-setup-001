@@ -311,7 +311,7 @@ export default function ModernizationTab() {
 
   return (
     <div className="h-full overflow-y-auto bg-slate-950 text-slate-100">
-      <div className="flex w-full flex-col gap-6 p-6">
+      <div className="flex w-full flex-col gap-6 px-3 py-6 md:px-4 xl:px-5">
         <div className="rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 p-6 shadow-2xl">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -320,7 +320,7 @@ export default function ModernizationTab() {
                 Modernization Control Plane
               </div>
               <h1 className="text-3xl font-semibold tracking-tight">WinFrame-style demo visibility on top of the current MVP</h1>
-              <p className="mt-2 max-w-3xl text-sm text-slate-400">
+              <p className="mt-2 text-sm text-slate-400">
                 Dependency graph, wave planning, paragraph-level translation status, and escalation signals are layered onto the existing parser,
                 graph, MCP, and Step Functions flow.
               </p>
@@ -390,7 +390,7 @@ export default function ModernizationTab() {
           )}
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
+        <div className="grid gap-5 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[256px_minmax(0,1fr)]">
           <aside className="rounded-3xl border border-slate-800 bg-slate-900/80 p-4">
             <div className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Program Dashboard</div>
             <div className="space-y-3">
