@@ -1,0 +1,42 @@
+name: Build V2 UI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'demo-ui-design/**'
+      - '.github/workflows/build-v2-ui.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-v2-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: demo-ui-design
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: demo-ui-design/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build V2 UI
+        run: npm run build
+
+      - name: Upload V2 build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-ui-design-dist
+          path: demo-ui-design/dist
