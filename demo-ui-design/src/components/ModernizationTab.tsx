@@ -311,7 +311,7 @@ export default function ModernizationTab() {
 
   return (
     <div className="h-full overflow-y-auto bg-slate-950 text-slate-100">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 p-6">
+      <div className="flex w-full flex-col gap-6 p-6">
         <div className="rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 p-6 shadow-2xl">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -465,7 +465,7 @@ export default function ModernizationTab() {
                       <div className="flex items-center justify-between gap-4">
                         <div>
                           <div className="text-sm font-semibold text-slate-100">
-                            {link.source} <span className="text-slate-500">→</span> {link.target}
+                            {link.source} <span className="text-slate-500">-&gt;</span> {link.target}
                           </div>
                           <div className="mt-1 text-xs text-slate-500">{link.file ?? 'derived from graph output'}</div>
                         </div>
